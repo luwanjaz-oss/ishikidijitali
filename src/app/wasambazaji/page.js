@@ -3,31 +3,42 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
-function generateCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 5; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return "ISHIKI-" + code;
-}
+// Hii inatumika TU kama oda ya zamani haina commission_total iliyohifadhiwa.
+// Oda mpya zote zinatumia commission_total iliyokokotolewa wakati wa checkout
+// kutoka kwenye "commission" ya kila bidhaa (angalia app/page.js).
+const FALLBACK_COMMISSION_RATE = 0.20; // 20%
 
 function fmtTZS(n) {
   return (n || 0).toLocaleString("en-US") + " TZS";
 }
 
-export default function WasambazajiPage() {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+function generateRefCode(fullName) {
+  const base =
+    (fullName || "ISHIKI")
+      .trim()
+      .split(" ")[0]
+      .toUpperCase()
+      .replace(/[^A-Z]/g, "")
+      .slice(0, 6) || "ISHIKI";
+  const random = Math.random().toString(36).slice(2, 7).toUpperCase();
+  return `${base}-${random}`;
+}
+
+export default function WasambajiPage() {
   const [refCode, setRefCode] = useState(null);
   const [affiliate, setAffiliate] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
   const [siteUrl, setSiteUrl] = useState("");
-  const [ordersCount, setOrdersCount] = useState(0);
-  const [commissionSum, setCommissionSum] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const [orders, setOrders] = useState([]);
+  const [totalSales, setTotalSales] = useState(0);
+  const [totalCommission, setTotalCommission] = useState(0);
+
+  const [fullName, setFullName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [regError, setRegError] = useState("");
+  const [regSubmitting, setRegSubmitting] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -40,94 +51,72 @@ export default function WasambazajiPage() {
     setLoading(false);
   }, []);
 
+  const fetchAffiliateData = async (code) => {
+    if (!code) return;
+
+    const { data: affRows } = await supabase
+      .from("affiliates")
+      .select("*")
+      .eq("ref_code", code)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (affRows && affRows.length > 0) setAffiliate(affRows[0]);
+
+    const { data: ordersData, error } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("ref_code", code)
+      .order("created_at", { ascending: false });
+
+    if (ordersData && !error) {
+      setOrders(ordersData);
+
+      const salesSum = ordersData.reduce(
+        (sum, item) => sum + (Number(item.total) || 0),
+        0
+      );
+      setTotalSales(salesSum);
+
+      // Kila oda tayari ina commission_total iliyokokotolewa kwa usahihi
+      // kutoka kwenye commission ya kila bidhaa iliyouzwa (checkout time).
+      const commSum = ordersData.reduce((sum, item) => {
+        const comm = item.commission_total !== null && item.commission_total !== undefined
+          ? Number(item.commission_total)
+          : (Number(item.total) || 0) * FALLBACK_COMMISSION_RATE;
+        return sum + comm;
+      }, 0);
+
+      setTotalCommission(commSum);
+    }
+  };
+
   useEffect(() => {
     if (!refCode) return;
 
-    // Fetch taarifa za Msambazaji kutoka meza ya affiliates
-    supabase
-      .from("affiliates")
-      .select("*")
-      .eq("ref_code", refCode)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (data) {
-          setAffiliate({
-            ...data,
-            name: data.full_name || data.name || "Msambazaji",
-          });
-        }
-        if (error) console.error("Error fetching affiliate:", error);
-      });
+    fetchAffiliateData(refCode);
 
-    // Fetch mauzo kutoka meza ya orders (kama ipo)
-    supabase
-      .from("orders")
-      .select("commission_amount")
-      .eq("ref_code", refCode)
-      .then(({ data, error }) => {
-        if (data && !error) {
-          setOrdersCount(data.length);
-          const totalComm = data.reduce(
-            (sum, order) => sum + (order.commission_amount || 0),
-            0
-          );
-          setCommissionSum(totalComm);
+    const channel = supabase
+      .channel("realtime-orders")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "orders",
+          filter: `ref_code=eq.${refCode}`,
+        },
+        () => {
+          fetchAffiliateData(refCode);
         }
-      });
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refCode]);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!name.trim() || !phone.trim()) {
-      setError("Jaza jina na namba ya simu.");
-      return;
-    }
-    setError("");
-    setSubmitting(true);
-
-    let success = false;
-    let attempt = 0;
-    let hardError = null;
-
-    while (attempt < 4 && !success) {
-      const code = generateCode();
-
-      // Tunatuma full_name na hatutumii .select() kuzuia 400 Bad Request
-      const { error: insertError } = await supabase
-        .from("affiliates")
-        .insert({
-          full_name: name.trim(),
-          phone: phone.trim(),
-          ref_code: code,
-        });
-
-      if (!insertError) {
-        setRefCode(code);
-        setAffiliate({
-          full_name: name.trim(),
-          name: name.trim(),
-          phone: phone.trim(),
-          ref_code: code,
-        });
-        localStorage.setItem("ishiki_ref_code", code);
-        success = true;
-      } else if (insertError.code === "23505") {
-        // Unique constraint violation kwenye ref_code - inajaribu tena
-        attempt++;
-      } else {
-        console.error("SUPABASE ERROR:", insertError);
-        hardError = insertError;
-        break;
-      }
-    }
-
-    if (!success) {
-      setError(
-        hardError?.message || "Kuna tatizo la mtandao, jaribu tena."
-      );
-    }
-    setSubmitting(false);
-  }
 
   function copyLink() {
     const link = `${siteUrl}/?ref=${refCode}`;
@@ -136,165 +125,263 @@ export default function WasambazajiPage() {
     setTimeout(() => setCopied(false), 1600);
   }
 
-  const waShareMsg = encodeURIComponent(
-    `Karibu Ishi Kidijitali! Nunua bidhaa nzuri kutoka China, USA na Dubai: ${siteUrl}/?ref=${refCode}`
-  );
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    if (regSubmitting) return;
+
+    setRegError("");
+    setRegSubmitting(true);
+
+    const cleanName = fullName.trim();
+    const cleanPhone = phone.trim();
+
+    try {
+      const { data: existingRows, error: lookupErr } = await supabase
+        .from("affiliates")
+        .select("*")
+        .eq("phone", cleanPhone)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (lookupErr) throw lookupErr;
+
+      const existing = existingRows && existingRows.length > 0 ? existingRows[0] : null;
+
+      if (existing) {
+        localStorage.setItem("ishiki_ref_code", existing.ref_code);
+        setRefCode(existing.ref_code);
+        setRegSubmitting(false);
+        return;
+      }
+
+      let created = null;
+      let lastError = null;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const candidateCode = generateRefCode(cleanName);
+        const { data: inserted, error: insertErr } = await supabase
+          .from("affiliates")
+          .insert([{ full_name: cleanName, phone: cleanPhone, ref_code: candidateCode }])
+          .select()
+          .maybeSingle();
+
+        if (!insertErr) {
+          created = inserted || { full_name: cleanName, phone: cleanPhone, ref_code: candidateCode };
+          break;
+        }
+
+        lastError = insertErr;
+        if (insertErr.code !== "23505") break;
+      }
+
+      if (!created) throw lastError || new Error("Imeshindwa kujisajili");
+
+      localStorage.setItem("ishiki_ref_code", created.ref_code);
+      setAffiliate(created);
+      setRefCode(created.ref_code);
+    } catch (err) {
+      console.error("Affiliate registration error:", err);
+      setRegError(
+        err?.message
+          ? `Imeshindwa kujisajili: ${err.message}`
+          : "Imeshindwa kujisajili. Tafadhali angalia mtandao wako na ujaribu tena."
+      );
+    } finally {
+      setRegSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return <p className="text-center p-10 text-gray-500">Inapakia...</p>;
+  }
+
+  if (!refCode) {
+    return (
+      <main className="min-h-screen bg-[#F8F9FA] text-[#12182B] flex items-center justify-center px-4 py-10">
+        <div className="bg-white border border-gray-200 p-6 sm:p-8 rounded-2xl shadow-sm max-w-md w-full">
+          <span className="inline-block bg-[#17A398]/10 text-[#17A398] text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-3">
+            Jiunge Nasi
+          </span>
+          <h1 className="text-xl font-bold mb-1">Jisajili Kama Msambazaji</h1>
+          <p className="text-xs text-gray-500 mb-6 leading-relaxed">
+            Jaza taarifa zako ili upate link yako binafsi ya kusambaza na uanze kupata
+            commission kwa kila mauzo yanayofanyika kupitia link yako.
+          </p>
+
+          <form onSubmit={handleRegister} className="space-y-4">
+            <div>
+              <label className="text-[11px] font-bold block mb-1">Jina Kamili</label>
+              <input
+                type="text"
+                required
+                placeholder="Mfano: Juma Ally"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold block mb-1">Namba ya Simu (WhatsApp)</label>
+              <input
+                type="tel"
+                required
+                placeholder="0754XXXXXX"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+              />
+            </div>
+
+            {regError && (
+              <p className="text-[11px] text-red-500 font-semibold">{regError}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={regSubmitting}
+              className="w-full bg-[#12182B] hover:bg-[#17A398] disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-xs transition-colors"
+            >
+              {regSubmitting ? "Inasajili..." : "Jisajili Sasa 🤝"}
+            </button>
+          </form>
+
+          <p className="text-[10px] text-gray-400 mt-4 text-center leading-relaxed">
+            Tayari umeshajisajili awali kwenye kifaa kingine? Weka namba yako ya simu
+            hapo juu ili turejeshe akaunti yako.
+          </p>
+
+          <Link href="/" className="block text-center text-[#17A398] text-xs font-bold underline mt-4">
+            Rudi Nyumbani
+          </Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#F8F9FA] text-[#12182B]">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#12182B] border-b border-white/10">
-        <div className="max-w-6xl mx-auto px-5 py-3 flex items-center justify-between gap-4">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="bg-[#E5383B] text-white font-bold text-lg px-2 py-1 rounded">
-              Ishi
-            </span>
-            <div className="flex flex-col leading-none">
-              <span className="text-lg font-bold text-white">Kidijitali</span>
-              <span className="text-[9px] tracking-widest text-white/50 uppercase hidden sm:block">
-                Lifestyle Service
-              </span>
-            </div>
-          </Link>
-          <nav className="flex items-center gap-2">
-            <Link
-              href="/"
-              className="text-white/70 hover:text-white hover:bg-white/10 px-4 py-2 rounded-full text-sm font-medium transition"
-            >
-              Duka
-            </Link>
-            <Link
-              href="/wasambazaji"
-              className="text-white bg-white/10 px-4 py-2 rounded-full text-sm font-medium"
-            >
-              Wasambazaji
-            </Link>
-          </nav>
-        </div>
+      <header className="sticky top-0 z-50 bg-[#12182B] border-b border-white/10 px-4 sm:px-6 py-4 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2">
+          <span className="bg-[#E5383B] text-white text-xs font-bold px-2 py-1 rounded">
+            Ishi
+          </span>
+          <span className="text-white font-bold text-base">Kidijitali</span>
+        </Link>
       </header>
 
-      {/* Main Content */}
-      <section className="max-w-3xl mx-auto px-5 py-12">
-        {loading ? (
-          <p className="text-center text-gray-500 text-sm">Inapakia...</p>
-        ) : !refCode ? (
-          <div className="max-w-md mx-auto bg-white border border-gray-200 shadow-sm rounded-2xl p-8">
-            <h2 className="text-xl font-bold mb-2">Jiunge kuwa Msambazaji</h2>
-            <p className="text-sm text-gray-600 mb-6">
-              Jaza taarifa zako upate link yako ya kipekee ya kushea na kupata
-              commission hadi 35%.
+      <section className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+        <div className="space-y-6">
+          <div className="bg-white border border-gray-200 p-5 sm:p-6 rounded-2xl shadow-sm flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold">
+                Hujambo, {affiliate?.full_name || affiliate?.name || "Msambazaji"} 👋
+              </h1>
+              <p className="text-xs text-gray-500 mt-1">
+                Namba ya Simu: {affiliate?.phone || "—"} | Code: <strong>{refCode}</strong>
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1">
+                Commission hutofautiana kwa kila bidhaa (angalia % kwenye ukurasa wa bidhaa husika)
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("ishiki_ref_code");
+                setRefCode(null);
+                setAffiliate(null);
+                setOrders([]);
+                setTotalSales(0);
+                setTotalCommission(0);
+              }}
+              className="text-[10px] text-gray-400 hover:text-red-500 font-semibold underline whitespace-nowrap self-start"
+            >
+              Badilisha Akaunti
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
+              <p className="text-xs text-gray-500 font-medium">Mauzo Yaliyofanyika</p>
+              <h3 className="text-2xl font-bold text-[#12182B] mt-2">
+                {orders.length} Oda
+              </h3>
+            </div>
+            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
+              <p className="text-xs text-gray-500 font-medium">Thamani ya Mauzo Yote</p>
+              <h3 className="text-2xl font-bold text-blue-600 mt-2">
+                {fmtTZS(totalSales)}
+              </h3>
+            </div>
+            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
+              <p className="text-xs text-gray-500 font-medium">Commission Yako</p>
+              <h3 className="text-2xl font-bold text-emerald-600 mt-2">
+                {fmtTZS(totalCommission)}
+              </h3>
+            </div>
+          </div>
+
+          <div className="bg-[#12182B] text-white p-5 sm:p-6 rounded-2xl">
+            <h3 className="text-sm font-semibold">Link Yako ya Kusambaza</h3>
+            <p className="text-xs text-gray-400 mt-1 mb-4">
+              Mtu akinunua kupitia link hii, commission inajipiga papo hapo kwenye akaunti yako.
             </p>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">
-                  Jina Lako Kamili
-                </label>
-                <input
-                  type="text"
-                  placeholder="Mfano: Zacharia Luwanja"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#12182B]"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">
-                  Namba ya Simu
-                </label>
-                <input
-                  type="tel"
-                  placeholder="07XXXXXXXX"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#12182B]"
-                />
-              </div>
-
-              {error && (
-                <p className="text-xs text-red-500 bg-red-50 p-2 rounded border border-red-200">
-                  {error}
-                </p>
-              )}
-
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                readOnly
+                value={`${siteUrl}/?ref=${refCode}`}
+                className="bg-white/10 text-amber-300 text-xs font-mono px-4 py-3 rounded-xl flex-1 outline-none overflow-x-auto"
+              />
               <button
-                type="submit"
-                disabled={submitting}
-                className="w-full bg-[#12182B] hover:bg-black text-white py-3 rounded-lg font-semibold text-sm transition disabled:opacity-50"
+                onClick={copyLink}
+                className="bg-amber-400 text-black font-bold text-xs px-6 py-3 rounded-xl hover:bg-amber-500 transition"
               >
-                {submitting ? "Inasajili..." : "Pata Link Yangu"}
+                {copied ? "Imenakiliwa!" : "Nakili Link"}
               </button>
-            </form>
-          </div>
-        ) : (
-          <div className="bg-white border border-gray-200 rounded-2xl p-6 md:p-8 shadow-sm">
-            <h2 className="text-2xl font-bold mb-1">
-              Karibu, {affiliate?.name || affiliate?.full_name || name || "Msambazaji"} 👋
-            </h2>
-            <p className="text-gray-600 text-sm mb-6">
-              Shea link yako, kila mauzo yanayotokana nayo yanakupatia commission.
-            </p>
-
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-              <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
-                <div className="text-xs text-gray-500 font-medium">
-                  Mauzo yaliyotokana na link yako
-                </div>
-                <div className="text-2xl font-bold text-[#12182B] mt-1">
-                  {ordersCount}
-                </div>
-              </div>
-              <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl">
-                <div className="text-xs text-gray-500 font-medium">
-                  Commission uliyopata (jumla)
-                </div>
-                <div className="text-2xl font-bold text-green-600 mt-1">
-                  {fmtTZS(commissionSum)}
-                </div>
-              </div>
             </div>
-
-            {/* Link Box */}
-            <div className="bg-[#12182B] text-white p-5 rounded-xl mb-6">
-              <div className="text-xs text-gray-400 mb-2">
-                Link yako ya kipekee
-              </div>
-              <div className="text-sm font-mono bg-white/10 p-3 rounded-lg text-amber-300 break-all mb-4">
-                {siteUrl}/?ref={refCode}
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={copyLink}
-                  className="bg-amber-400 hover:bg-amber-500 text-black px-4 py-2.5 rounded-lg font-semibold text-sm transition"
-                >
-                  {copied ? "Imenakiliwa ✓" : "Nakili link"}
-                </button>
-                <a
-                  href={`https://wa.me/?text=${waShareMsg}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg font-semibold text-sm transition"
-                >
-                  Shea WhatsApp
-                </a>
-              </div>
-            </div>
-
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Malipo ya commission yatafanywa na Ishi Kidijitali moja kwa moja kwako
-              (kupitia namba yako ya simu: <strong>{affiliate?.phone || phone}</strong>) baada ya mauzo kuthibitishwa.
-            </p>
           </div>
-        )}
-      </section>
 
-      <footer className="bg-[#12182B] text-white px-5 py-8 mt-12">
-        <div className="max-w-6xl mx-auto text-center">
-          <p className="text-white/40 text-xs">
-            © 2026 Ishi Kidijitali — Lifestyle Service
-          </p>
+          <div className="bg-white border border-gray-200 p-5 sm:p-6 rounded-2xl shadow-sm">
+            <h3 className="font-bold text-base mb-3">Historia ya Mauzo & Commission</h3>
+            {orders.length === 0 ? (
+              <p className="text-xs text-gray-400 italic">
+                Bado hujapata mauzo kupitia link yako. Sambaza link uanze kupata commission!
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {orders.map((order) => {
+                  const comm = order.commission_total !== null && order.commission_total !== undefined
+                    ? Number(order.commission_total)
+                    : (Number(order.total) || 0) * FALLBACK_COMMISSION_RATE;
+                  return (
+                    <div
+                      key={order.id}
+                      className="flex justify-between items-center p-3 border-b border-gray-100 text-xs gap-2"
+                    >
+                      <div>
+                        <p className="font-semibold text-gray-800">
+                          Oda #{order.id}
+                        </p>
+                        <p className="text-gray-400">
+                          {order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-medium text-gray-600">
+                          Gharama: {fmtTZS(order.total)}
+                        </p>
+                        <p className="font-bold text-emerald-600">
+                          Com: +{fmtTZS(comm)}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
-      </footer>
+      </section>
     </main>
   );
 }

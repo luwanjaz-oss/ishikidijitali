@@ -1,115 +1,132 @@
 "use client";
 import { createContext, useContext, useState, useEffect } from "react";
 
-const CartContext = createContext(null);
+const CartContext = createContext();
+
+// Hii inatengeneza "cartItemId" ya kipekee kwa bidhaa + machaguo yake
+// (size, rangi, aina/uwezo/watts). Bidhaa moja yenye machaguo tofauti
+// (mfano: Shati Size M vs Shati Size L) inahesabiwa kama vitu tofauti
+// kikapuni, lakini bidhaa isiyo na machaguo yoyote inabaki kitu kimoja tu.
+function buildCartItemId(product) {
+  if (product.cartItemId) return product.cartItemId;
+  const parts = [
+    product.id,
+    product.selectedSize || "",
+    product.selectedColor || "",
+    product.selectedType || "",
+  ];
+  return parts.join("-");
+}
 
 export function CartProvider({ children }) {
+  // Kikapu kinaanza kikiwa TUPU (hakuna bidhaa ya "demo" tena)
   const [cart, setCart] = useState([]);
-  const [loaded, setLoaded] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
-  // 1. Kusoma kikapu kutoka LocalStorage mara tu page inapoload
+  // Pakia kikapu kutoka localStorage mara tu ukurasa unapofunguliwa
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("ishiki_cart");
-      if (saved) setCart(JSON.parse(saved));
-    } catch (e) {
-      console.error("Could not read saved cart:", e);
+    if (typeof window !== "undefined") {
+      const savedCart = localStorage.getItem("ishiki_cart");
+      if (savedCart) {
+        try {
+          const parsed = JSON.parse(savedCart);
+          if (Array.isArray(parsed)) {
+            setCart(parsed);
+          }
+        } catch (e) {
+          console.error("Error loading cart", e);
+        }
+      }
     }
-    setLoaded(true);
+    setHydrated(true);
   }, []);
 
-  // 2. Kuhifadhi kikapu kwenye LocalStorage kila kinapobadilika
-  useEffect(() => {
-    if (!loaded) return;
-    localStorage.setItem("ishiki_cart", JSON.stringify(cart));
-  }, [cart, loaded]);
+  const saveCart = (newCart) => {
+    setCart(newCart);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ishiki_cart", JSON.stringify(newCart));
+    }
+  };
 
-  /**
-   * Ongeza bidhaa kikapuni
-   * Inapokea product object (e.g. { id, name, price, selectedVariant, image_url, ... })
-   */
-  function addToCart(product) {
-    if (!product || !product.id) return;
+  // Kitambulisho cha kipekee cha kila bidhaa kikapuni
+  const getItemKey = (item) => item.cartItemId || item.id;
 
-    const variant = product.selectedVariant || "";
+  // addToCart inapokea OBJECT MOJA ya bidhaa (product), ambayo inaweza
+  // kuwa na selectedSize / selectedColor / selectedType tayari ndani yake.
+  // Hii ndiyo njia sahihi ya kuiita kutoka popote (Duka Kuu au Ukurasa
+  // wa Bidhaa Binafsi) - zote zinatakiwa kutuma object moja, siyo
+  // arguments tofauti tofauti.
+  const addToCart = (product) => {
+    if (!product || !product.id) {
+      console.error("addToCart: bidhaa batili", product);
+      return;
+    }
 
-    setCart((prev) => {
-      // Tafuta kama bidhaa yenye ID na VARIANT hiyo ipo tayari
-      const existingIndex = prev.findIndex(
-        (i) => i.id === product.id && (i.selectedVariant || "") === variant
+    const cartItemId = buildCartItemId(product);
+    const itemToAdd = { ...product, cartItemId };
+
+    setCart((prevCart) => {
+      const existingIndex = prevCart.findIndex(
+        (item) => getItemKey(item) === cartItemId
       );
 
+      let updated;
       if (existingIndex > -1) {
-        // Kama ipo, ongeza idadi (qty)
-        return prev.map((item, index) =>
-          index === existingIndex
-            ? { ...item, qty: item.qty + 1 }
-            : item
-        );
+        updated = [...prevCart];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          qty: (updated[existingIndex].qty || 1) + (product.qty || 1),
+        };
+      } else {
+        updated = [...prevCart, { ...itemToAdd, qty: itemToAdd.qty || 1 }];
       }
 
-      // Kama haipo, iongeze kama bidhaa mpya ikiwa na qty = 1
-      return [
-        ...prev,
-        {
-          ...product,
-          selectedVariant: variant,
-          qty: 1,
-        },
-      ];
+      if (typeof window !== "undefined") {
+        localStorage.setItem("ishiki_cart", JSON.stringify(updated));
+      }
+      return updated;
     });
-  }
+  };
 
-  /**
-   * Badilisha idadi ya bidhaa (Ongeza/Punguza)
-   */
-  function changeQty(id, selectedVariant = "", delta) {
-    const variant = selectedVariant || "";
+  // identifier = cartItemId (kama ipo) au id
+  const removeFromCart = (identifier) => {
+    const updated = cart.filter((item) => getItemKey(item) !== identifier);
+    saveCart(updated);
+  };
 
-    setCart((prev) =>
-      prev
-        .map((item) => {
-          if (
-            item.id === id &&
-            (item.selectedVariant || "") === variant
-          ) {
-            return { ...item, qty: item.qty + delta };
-          }
-          return item;
-        })
-        .filter((item) => item.qty > 0) // Ondoa bidhaa kama qty ikifika 0
+  const updateQty = (identifier, newQty) => {
+    if (newQty <= 0) {
+      removeFromCart(identifier);
+      return;
+    }
+    const updated = cart.map((item) =>
+      getItemKey(item) === identifier ? { ...item, qty: newQty } : item
     );
-  }
+    saveCart(updated);
+  };
 
-  /**
-   * Ondoa bidhaa kabisa kwenye kikapu
-   */
-  function removeFromCart(id, selectedVariant = "") {
-    const variant = selectedVariant || "";
+  const clearCart = () => {
+    saveCart([]);
+  };
 
-    setCart((prev) =>
-      prev.filter(
-        (item) =>
-          !(item.id === id && (item.selectedVariant || "") === variant)
-      )
-    );
-  }
+  const totalAmount = cart.reduce(
+    (sum, item) => sum + (Number(item.price) || 0) * (item.qty || 1),
+    0
+  );
 
-  /**
-   * Safisha kikapu chote
-   */
-  function clearCart() {
-    setCart([]);
-  }
+  const totalCount = cart.reduce((sum, item) => sum + (item.qty || 1), 0);
 
   return (
     <CartContext.Provider
       value={{
         cart,
+        hydrated,
         addToCart,
-        changeQty,
         removeFromCart,
+        updateQty,
         clearCart,
+        totalAmount,
+        totalCount,
       }}
     >
       {children}
@@ -117,10 +134,12 @@ export function CartProvider({ children }) {
   );
 }
 
-export function useCart() {
-  const ctx = useContext(CartContext);
-  if (!ctx) {
+export const useCart = () => {
+  const context = useContext(CartContext);
+  if (!context) {
     throw new Error("useCart must be used within a CartProvider");
   }
-  return ctx;
-}
+  return context;
+};
+
+export default useCart;
