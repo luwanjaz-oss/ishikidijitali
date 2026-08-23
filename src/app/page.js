@@ -94,7 +94,7 @@ const TRANSPORT_ROUTES = [
 const FURSA_ZA_ISHIKI = [
   { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
   { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
-  { icon: "🏠", title: "Pambeza Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
+  { icon: "🏠", title: "Pamba Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
   { icon: "📈", title: "Kuza Biashara", desc: "Ongeza bidhaa mpya, kuza biashara uliyonayo" },
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
