@@ -94,7 +94,7 @@ const TRANSPORT_ROUTES = [
 const FURSA_ZA_ISHIKI = [
   { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
   { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
-  { icon: "🏠", title: "Pamba Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
+  { icon: "🏠", title: "Pambeza Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
   { icon: "📈", title: "Kuza Biashara", desc: "Ongeza bidhaa mpya, kuza biashara uliyonayo" },
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
@@ -112,6 +112,40 @@ const CATEGORIES = [
   { id: "elektroniki", label: "Elektroniki" },
   { id: "vitu_vyote", label: "Zana & Mashine" },
   { id: "fashion", label: "Mavazi & Viatu" },
+];
+
+const SERVICE_CENTER_NUMBER = "0754282086";
+
+// MASWALI NA MAJIBU (FAQ) - inaonekana chini ya tovuti kabla ya footer
+const FAQ_ITEMS = [
+  {
+    q: "Ishi Kidijitali inafanya kazi vipi?",
+    a: "Tunakuletea bidhaa mbalimbali kutoka China, USA, Dubai na hapa Dar es Salaam. Ukishaagiza, sisi ndio tunashughulikia utafutaji, ununuzi, na usafirishaji mpaka mkoa unapoishi.",
+  },
+  {
+    q: "Ninanunuaje bidhaa?",
+    a: "Chagua bidhaa Duka Kuu, bonyeza '+ Ongeza' kuweka kikapuni (chagua size/rangi/aina kama zipo), kisha fungua kikapu chako, jaza taarifa zako, na bonyeza 'Tuma Oda Hii WhatsApp'. Timu yetu itakuthibitishia oda kupitia WhatsApp.",
+  },
+  {
+    q: "Malipo yanafanyikaje?",
+    a: `Unaweza kulipa kwa njia mbili: (1) Pay on Delivery - unalipa CASH baada ya mzigo kufika kwako, au (2) Kidogo kidogo - unaweza kutuma malipo ya awali (deposit) kupitia Lipa Namba/NBC, kisha ulipe salio mzigo ukifika. Wasiliana nasi WhatsApp ${SERVICE_CENTER_NUMBER} kupanga utaratibu unaokufaa.`,
+  },
+  {
+    q: "Mzigo wangu utasafirishwaje?",
+    a: "Njia ya usafiri (ndege, meli, au barabara) inategemea aina na uzito/ujazo wa mzigo wako. Mzigo mdogo/wa haraka mara nyingi hutumia ndege (air cargo), mzigo mkubwa/mzito hutumia meli (sea cargo) ambayo ni nafuu zaidi lakini inachukua muda mrefu. Tutakushauri njia bora zaidi kulingana na bidhaa uliyoagiza.",
+  },
+  {
+    q: "Naweza kufuatilia mzigo wangu vipi?",
+    a: "Bonyeza 'Fuatilia Mzigo 📦' kwenye menu, weka namba ya simu uliyotumia wakati wa oda, utaona hali ya oda yako papo hapo.",
+  },
+  {
+    q: "Nawezaje kuwa Msambazaji na kupata commission?",
+    a: "Bonyeza 'Jiunge Kama Msambazaji', jisajili kwa jina na namba ya simu, utapata link yako binafsi ya kusambaza. Mtu yeyote akinunua kupitia link yako, unapata commission moja kwa moja - kiwango hutofautiana kwa kila bidhaa.",
+  },
+  {
+    q: "Nawasiliana nanyi vipi kwa msaada zaidi?",
+    a: `Piga au WhatsApp Service Center yetu: ${SERVICE_CENTER_NUMBER}. Tuko tayari kukusaidia muda wowote kuhusu oda, malipo, au ufuatiliaji wa mzigo.`,
+  },
 ];
 
 function fmtTZS(n) {
@@ -152,6 +186,7 @@ export default function Home() {
   const [routeIdx, setRouteIdx] = useState(0);
   const [fursaIdx, setFursaIdx] = useState(0);
   const [category, setCategory] = useState("wote");
+  const [openFaqIdx, setOpenFaqIdx] = useState(0);
 
   // TRACKING - inatafuta oda halisi kwenye Supabase kwa namba ya simu
   const [trackingInput, setTrackingInput] = useState("");
@@ -415,7 +450,11 @@ export default function Home() {
 
   const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
   const cartTotal = cart ? cart.reduce((s, i) => s + i.price * (i.qty || 1), 0) : 0;
-  const filteredProducts = products.filter((p) => category === "wote" || p.category === category);
+  const filteredProducts = products.filter((p) => {
+    if (category === "wote") return true;
+    const pc = (p.category || "").toString().trim().toLowerCase();
+    return pc === category.toLowerCase();
+  });
   const currentRoute = TRANSPORT_ROUTES[routeIdx];
   const currentFursa = FURSA_ZA_ISHIKI[fursaIdx];
 
@@ -440,6 +479,7 @@ export default function Home() {
             <a href="#kuhusu" className="hover:text-white transition-colors">Kuhusu Sisi</a>
             <button onClick={() => setShowTrackingModal(true)} className="hover:text-white transition-colors">Fuatilia Mzigo 📦</button>
             <a href="#uwekezaji" className="hover:text-white transition-colors">Wekeza / Lipa Namba 💰</a>
+            <a href="#maswali" className="hover:text-white transition-colors">Maswali 💬</a>
             <Link href="/wasambazaji" className="hover:text-[#17A398] text-[#E8A93B] font-bold transition-colors">Wasambazaji 🤝</Link>
           </nav>
 
@@ -469,6 +509,7 @@ export default function Home() {
               Fuatilia Mzigo 📦
             </button>
             <a href="#uwekezaji" onClick={() => setShowMobileMenu(false)} className="py-1">Wekeza / Lipa Namba 💰</a>
+            <a href="#maswali" onClick={() => setShowMobileMenu(false)} className="py-1">Maswali 💬</a>
             <Link href="/wasambazaji" onClick={() => setShowMobileMenu(false)} className="py-1 text-[#E8A93B] font-bold">
               Wasambazaji 🤝
             </Link>
@@ -710,6 +751,50 @@ export default function Home() {
               <p className="text-[10px] text-white/60">Jina la Akaunti: {ACCOUNT_NAME}</p>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* MASWALI NA MAJIBU (FAQ) */}
+      <section id="maswali" className="max-w-3xl mx-auto px-4 py-10">
+        <div className="text-center mb-6">
+          <span className="inline-block bg-[#17A398]/10 text-[#0B5852] text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-3">
+            Maswali na Majibu
+          </span>
+          <h2 className="text-xl sm:text-2xl font-bold">Tunafanya Kazi Vipi?</h2>
+        </div>
+
+        <div className="space-y-2">
+          {FAQ_ITEMS.map((item, idx) => (
+            <div key={idx} className="bg-white border border-[#E4DFD2] rounded-xl overflow-hidden">
+              <button
+                onClick={() => setOpenFaqIdx(openFaqIdx === idx ? -1 : idx)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              >
+                <span className="text-xs sm:text-sm font-bold text-[#12182B]">{item.q}</span>
+                <span className={`text-[#17A398] font-bold text-lg shrink-0 transition-transform ${openFaqIdx === idx ? "rotate-45" : ""}`}>+</span>
+              </button>
+              {openFaqIdx === idx && (
+                <div className="px-4 pb-4">
+                  <p className="text-xs sm:text-sm text-[#6B7280] leading-relaxed">{item.a}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 bg-[#12182B] text-white rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold">Bado una swali?</p>
+            <p className="text-xs text-white/60">Service Center: {SERVICE_CENTER_NUMBER}</p>
+          </div>
+          <a
+            href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nina swali kuhusu huduma zenu.")}`}
+            target="_blank"
+            rel="noreferrer"
+            className="bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors whitespace-nowrap"
+          >
+            💬 Wasiliana Nasi WhatsApp
+          </a>
         </div>
       </section>
 
