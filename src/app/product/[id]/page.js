@@ -15,8 +15,34 @@ function getProductImages(p) {
 }
 
 // MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb)
-// - kolamu halisi kwenye Supabase. Muundo unaotarajiwa, mfano:
-// { "sizes": ["S","M","L"], "colors": ["Nyeusi","Nyeupe"], "types": ["220V","Battery"] }
+// - kolamu halisi kwenye Supabase. Kila kipengele kinaweza kuwa NENO TU, AU
+// OBJECT yenye picha na/au bei yake maalum, mfano:
+// {
+//   "colors": [
+//     {"name": "Green", "image": "https://...", "price": 12600},
+//     {"name": "Silver", "image": "https://...", "price": 13000},
+//     "Blue"
+//   ],
+//   "sizes": ["S", "M", "L"]
+// }
+function normalizeVariantList(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((v) => {
+      if (typeof v === "string") return { name: v, image: null, price: null, shipping_fee: null };
+      if (v && typeof v === "object" && v.name) {
+        return {
+          name: v.name,
+          image: v.image || null,
+          price: v.price !== null && v.price !== undefined && v.price !== "" ? Number(v.price) : null,
+          shipping_fee: v.shipping_fee !== null && v.shipping_fee !== undefined && v.shipping_fee !== "" ? Number(v.shipping_fee) : null,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
 function getProductVariants(p) {
   if (!p?.variants) return { sizes: [], colors: [], types: [] };
   let v = p.variants;
@@ -28,9 +54,9 @@ function getProductVariants(p) {
     }
   }
   return {
-    sizes: Array.isArray(v.sizes) ? v.sizes : [],
-    colors: Array.isArray(v.colors) ? v.colors : [],
-    types: Array.isArray(v.types) ? v.types : [],
+    sizes: normalizeVariantList(v.sizes),
+    colors: normalizeVariantList(v.colors),
+    types: normalizeVariantList(v.types),
   };
 }
 
@@ -65,9 +91,9 @@ export default function ProductDetailPage() {
       if (!error) {
         setProduct(data);
         const { sizes, colors, types } = getProductVariants(data);
-        if (sizes.length) setSelectedSize(sizes[0]);
-        if (colors.length) setSelectedColor(colors[0]);
-        if (types.length) setSelectedType(types[0]);
+        if (sizes.length) setSelectedSize(sizes[0].name);
+        if (colors.length) setSelectedColor(colors[0].name);
+        if (types.length) setSelectedType(types[0].name);
       }
       setLoading(false);
     }
@@ -114,6 +140,15 @@ export default function ProductDetailPage() {
   const requiresColor = variants.colors.length > 0;
   const requiresType = variants.types.length > 0;
 
+  const selectedSizeObj = variants.sizes.find((s) => s.name === selectedSize);
+  const selectedColorObj = variants.colors.find((c) => c.name === selectedColor);
+  const selectedTypeObj = variants.types.find((t) => t.name === selectedType);
+  // Bei ya mwisho: rangi > aina > size > bei ya kawaida ya bidhaa
+  const variantPrice = selectedColorObj?.price ?? selectedTypeObj?.price ?? selectedSizeObj?.price ?? null;
+  const variantImage = selectedColorObj?.image || selectedTypeObj?.image || selectedSizeObj?.image || null;
+  const variantShippingFee = selectedColorObj?.shipping_fee ?? selectedTypeObj?.shipping_fee ?? selectedSizeObj?.shipping_fee ?? null;
+  const displayPrice = variantPrice !== null ? variantPrice : product?.price;
+
   function handleAdd() {
     if (!product) return;
 
@@ -133,9 +168,13 @@ export default function ProductDetailPage() {
     setOptionError("");
     addToCart({
       ...product,
+      price: displayPrice,
+      basePrice: product.price,
+      shipping_fee: variantShippingFee !== null ? variantShippingFee : product.shipping_fee,
       selectedSize: selectedSize || undefined,
       selectedColor: selectedColor || undefined,
       selectedType: selectedType || undefined,
+      variantImage: variantImage,
       qty: 1,
     });
     setAdded(true);
@@ -187,13 +226,15 @@ export default function ProductDetailPage() {
           {/* GALLERY - MOBILE FRIENDLY, PICHA ZAIDI YA 5 ZINAWEZEKANA */}
           <div>
             <div className="w-full h-64 sm:h-96 bg-white rounded-2xl border border-[#E4DFD2] flex items-center justify-center overflow-hidden">
-              {images[activeImg] ? (
+              {variantImage ? (
+                <img src={variantImage} alt={product.name} className="h-full w-full object-contain" />
+              ) : images[activeImg] ? (
                 <img src={images[activeImg]} alt={product.name} className="h-full w-full object-contain" />
               ) : (
                 <span className="text-6xl">{product.emoji || "📦"}</span>
               )}
             </div>
-            {images.length > 1 && (
+            {!variantImage && images.length > 1 && (
               <div className="flex gap-2 mt-3 overflow-x-auto pb-1 snap-x snap-mandatory">
                 {images.map((img, i) => (
                   <button
@@ -217,8 +258,11 @@ export default function ProductDetailPage() {
               </span>
             )}
             <h1 className="text-xl sm:text-2xl font-bold mt-3 mb-2">{product.name}</h1>
-            <div className="text-xl sm:text-2xl font-bold text-[#12182B] mb-3 font-mono">
-              {fmtTZS(product.price)}
+            <div className="text-xl sm:text-2xl font-bold text-[#12182B] mb-3 font-mono flex items-center gap-2">
+              {fmtTZS(displayPrice)}
+              {variantPrice !== null && variantPrice !== product.price && (
+                <span className="text-sm text-gray-400 font-normal line-through">{fmtTZS(product.price)}</span>
+              )}
             </div>
 
             {product.quality_rating != null && (
@@ -260,16 +304,16 @@ export default function ProductDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {variants.sizes.map((sz) => (
                     <button
-                      key={sz}
+                      key={sz.name}
                       type="button"
-                      onClick={() => { setSelectedSize(sz); setOptionError(""); }}
+                      onClick={() => { setSelectedSize(sz.name); setOptionError(""); }}
                       className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
-                        selectedSize === sz
+                        selectedSize === sz.name
                           ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
                           : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
                       }`}
                     >
-                      {sz}
+                      {sz.name}
                     </button>
                   ))}
                 </div>
@@ -291,16 +335,19 @@ export default function ProductDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {variants.colors.map((clr) => (
                     <button
-                      key={clr}
+                      key={clr.name}
                       type="button"
-                      onClick={() => { setSelectedColor(clr); setOptionError(""); }}
-                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
-                        selectedColor === clr
+                      onClick={() => { setSelectedColor(clr.name); setOptionError(""); }}
+                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition flex items-center gap-1.5 ${
+                        selectedColor === clr.name
                           ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
                           : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
                       }`}
                     >
-                      {clr}
+                      {clr.image && (
+                        <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
+                      )}
+                      {clr.name}
                     </button>
                   ))}
                 </div>
@@ -322,16 +369,16 @@ export default function ProductDetailPage() {
                 <div className="flex flex-wrap gap-2">
                   {variants.types.map((tp) => (
                     <button
-                      key={tp}
+                      key={tp.name}
                       type="button"
-                      onClick={() => { setSelectedType(tp); setOptionError(""); }}
+                      onClick={() => { setSelectedType(tp.name); setOptionError(""); }}
                       className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
-                        selectedType === tp
+                        selectedType === tp.name
                           ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
                           : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
                       }`}
                     >
-                      {tp}
+                      {tp.name}
                     </button>
                   ))}
                 </div>

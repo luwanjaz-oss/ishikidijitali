@@ -28,9 +28,36 @@ function getProductCommissionRate(item) {
 }
 
 // MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb).
-// Muundo unaotarajiwa Supabase, mfano:
-// { "sizes": ["S","M","L"], "colors": ["Nyeusi","Nyeupe"], "types": ["220V","Battery"] }
-// Sehemu yoyote isiyowekwa (mfano hakuna "colors") haitaonyeshwa kabisa.
+// Kila kipengele kinaweza kuwa NENO TU (mfano "Nyeusi"), AU OBJECT yenye
+// picha na/au bei yake maalum, mfano:
+// {
+//   "colors": [
+//     {"name": "Green", "image": "https://...", "price": 12600},
+//     {"name": "Silver", "image": "https://...", "price": 13000},
+//     "Blue"
+//   ],
+//   "sizes": ["S", "M", "L"],
+//   "types": ["220V", "Battery"]
+// }
+// "image" na "price" ni HIARI - ukiacha, itatumia picha/bei ya kawaida ya bidhaa.
+function normalizeVariantList(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((v) => {
+      if (typeof v === "string") return { name: v, image: null, price: null, shipping_fee: null };
+      if (v && typeof v === "object" && v.name) {
+        return {
+          name: v.name,
+          image: v.image || null,
+          price: v.price !== null && v.price !== undefined && v.price !== "" ? Number(v.price) : null,
+          shipping_fee: v.shipping_fee !== null && v.shipping_fee !== undefined && v.shipping_fee !== "" ? Number(v.shipping_fee) : null,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
 function getProductVariants(p) {
   if (!p?.variants) return { sizes: [], colors: [], types: [] };
   let v = p.variants;
@@ -42,9 +69,9 @@ function getProductVariants(p) {
     }
   }
   return {
-    sizes: Array.isArray(v.sizes) ? v.sizes : [],
-    colors: Array.isArray(v.colors) ? v.colors : [],
-    types: Array.isArray(v.types) ? v.types : [],
+    sizes: normalizeVariantList(v.sizes),
+    colors: normalizeVariantList(v.colors),
+    types: normalizeVariantList(v.types),
   };
 }
 
@@ -61,6 +88,15 @@ const TRANSPORT_ROUTES = [
   { flag: "🇦🇪", name: "Dubai → Dar es Salaam", days: "Siku 5 - 7 (Direct Flight)", progress: "90%" },
   { flag: "🚢", name: "China Meli → Tanzania", days: "Siku 25 - 35 (Heavy Cargo)", progress: "40%" },
   { flag: "🚌", name: "Kariakoo → Mikoani Kote", days: "Siku 1 (Mabasi / Express)", progress: "98%" },
+];
+
+// FURSA ZA ISHI KIDIJITALI - inaonyesha kwa mzunguko (animation) kwenye Hero
+const FURSA_ZA_ISHIKI = [
+  { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
+  { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
+  { icon: "🏠", title: "Pambeza Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
+  { icon: "📈", title: "Kuza Biashara", desc: "Ongeza bidhaa mpya, kuza biashara uliyonayo" },
+  { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
 
 const SOCIAL_LINKS = {
@@ -114,6 +150,7 @@ export default function Home() {
   const [modalGalleryIdx, setModalGalleryIdx] = useState(0);
 
   const [routeIdx, setRouteIdx] = useState(0);
+  const [fursaIdx, setFursaIdx] = useState(0);
   const [category, setCategory] = useState("wote");
 
   // TRACKING - inatafuta oda halisi kwenye Supabase kwa namba ya simu
@@ -155,22 +192,43 @@ export default function Home() {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    const t = setInterval(() => {
+      setFursaIdx((i) => (i + 1) % FURSA_ZA_ISHIKI.length);
+    }, 2800);
+    return () => clearInterval(t);
+  }, []);
+
   const handleOpenProductModal = (product) => {
     setSelectedProduct(product);
     const { sizes, colors, types } = getProductVariants(product);
-    setSelectedSize(sizes[0] || "");
-    setSelectedColor(colors[0] || "");
-    setSelectedType(types[0] || "");
+    setSelectedSize(sizes[0]?.name || "");
+    setSelectedColor(colors[0]?.name || "");
+    setSelectedType(types[0]?.name || "");
     setModalGalleryIdx(0);
   };
 
   const handleAddToCartWithOptions = () => {
     if (!selectedProduct) return;
+    const { sizes, colors, types } = getProductVariants(selectedProduct);
+    const sizeObj = sizes.find((s) => s.name === selectedSize);
+    const colorObj = colors.find((c) => c.name === selectedColor);
+    const typeObj = types.find((t) => t.name === selectedType);
+    // Bei ya mwisho: rangi > aina > size > bei ya kawaida ya bidhaa
+    const effectivePrice = colorObj?.price ?? typeObj?.price ?? sizeObj?.price ?? selectedProduct.price;
+    const effectiveImage = colorObj?.image || typeObj?.image || sizeObj?.image || null;
+    // Shipping fee ya mwisho: rangi > aina > size > shipping_fee ya kawaida ya bidhaa
+    const effectiveShippingFee = colorObj?.shipping_fee ?? typeObj?.shipping_fee ?? sizeObj?.shipping_fee ?? selectedProduct.shipping_fee;
+
     const itemWithOptions = {
       ...selectedProduct,
+      price: effectivePrice,
+      basePrice: selectedProduct.price,
+      shipping_fee: effectiveShippingFee,
       selectedSize,
       selectedColor,
       selectedType,
+      variantImage: effectiveImage,
       qty: 1,
     };
     if (addToCart) addToCart(itemWithOptions);
@@ -359,6 +417,7 @@ export default function Home() {
   const cartTotal = cart ? cart.reduce((s, i) => s + i.price * (i.qty || 1), 0) : 0;
   const filteredProducts = products.filter((p) => category === "wote" || p.category === category);
   const currentRoute = TRANSPORT_ROUTES[routeIdx];
+  const currentFursa = FURSA_ZA_ISHIKI[fursaIdx];
 
   const modalImages = selectedProduct ? getProductImages(selectedProduct) : [];
   const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [] };
@@ -438,6 +497,39 @@ export default function Home() {
                 Jiunge Kama Msambazaji
               </Link>
             </div>
+
+            {/* FURSA ZA ISHI KIDIJITALI - INAZUNGUKA (ANIMATION) */}
+            <div className="mt-6 bg-white/5 border border-white/10 rounded-2xl p-4 max-w-sm overflow-hidden">
+              <span className="text-[10px] font-bold text-[#E8A93B] uppercase tracking-wider">
+                Fursa Zilizopo Ishi Kidijitali
+              </span>
+              <div key={fursaIdx} className="mt-2 flex items-center gap-3 fursa-fade">
+                <span className="text-3xl shrink-0">{currentFursa.icon}</span>
+                <div>
+                  <p className="text-sm font-bold text-white leading-tight">{currentFursa.title}</p>
+                  <p className="text-[11px] text-white/60 leading-snug">{currentFursa.desc}</p>
+                </div>
+              </div>
+              <div className="flex gap-1.5 mt-3">
+                {FURSA_ZA_ISHIKI.map((_, i) => (
+                  <span
+                    key={i}
+                    className={`h-1 rounded-full transition-all duration-500 ${
+                      i === fursaIdx ? "w-6 bg-[#E8A93B]" : "w-1.5 bg-white/20"
+                    }`}
+                  ></span>
+                ))}
+              </div>
+            </div>
+            <style jsx>{`
+              @keyframes fursaFadeIn {
+                from { opacity: 0; transform: translateY(6px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              .fursa-fade {
+                animation: fursaFadeIn 0.5s ease-out;
+              }
+            `}</style>
           </div>
 
           <div className="bg-gradient-to-br from-[#1D2440] to-[#17A398]/20 border border-white/10 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
@@ -655,29 +747,50 @@ export default function Home() {
           <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
             <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
 
-            {modalImages.length > 0 && (
-              <div className="mb-4">
-                <div className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden">
-                  <img src={modalImages[modalGalleryIdx]} alt={selectedProduct.name} className="h-full object-contain" />
-                </div>
-                {modalImages.length > 1 && (
-                  <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
-                    {modalImages.map((img, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setModalGalleryIdx(i)}
-                        className={`shrink-0 w-12 h-12 rounded-lg border-2 overflow-hidden ${i === modalGalleryIdx ? "border-[#17A398]" : "border-gray-200"}`}
-                      >
-                        <img src={img} alt="" className="w-full h-full object-cover" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            {(() => {
+              const sizeObj = modalVariants.sizes.find((s) => s.name === selectedSize);
+              const colorObj = modalVariants.colors.find((c) => c.name === selectedColor);
+              const typeObj = modalVariants.types.find((t) => t.name === selectedType);
+              const variantImage = colorObj?.image || typeObj?.image || sizeObj?.image || null;
+              const variantPrice = colorObj?.price ?? typeObj?.price ?? sizeObj?.price ?? null;
+              const displayImage = variantImage || modalImages[modalGalleryIdx];
+              const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
 
-            <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-            <p className="text-xs font-bold text-[#17A398] mb-4">{fmtTZS(selectedProduct.price)}</p>
+              return (
+                <>
+                  {(displayImage || modalImages.length > 0) && (
+                    <div className="mb-4">
+                      <div className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden">
+                        {displayImage ? (
+                          <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain" />
+                        ) : null}
+                      </div>
+                      {!variantImage && modalImages.length > 1 && (
+                        <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+                          {modalImages.map((img, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setModalGalleryIdx(i)}
+                              className={`shrink-0 w-12 h-12 rounded-lg border-2 overflow-hidden ${i === modalGalleryIdx ? "border-[#17A398]" : "border-gray-200"}`}
+                            >
+                              <img src={img} alt="" className="w-full h-full object-cover" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
+                  <p className="text-xs font-bold text-[#17A398] mb-4">
+                    {fmtTZS(displayPrice)}
+                    {variantPrice !== null && variantPrice !== selectedProduct.price && (
+                      <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
+                    )}
+                  </p>
+                </>
+              );
+            })()}
 
             {modalVariants.sizes.length > 0 && (
               <div className="mb-4">
@@ -685,11 +798,11 @@ export default function Home() {
                 <div className="flex gap-2 flex-wrap">
                   {modalVariants.sizes.map((sz) => (
                     <button
-                      key={sz}
-                      onClick={() => setSelectedSize(sz)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedSize === sz ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                      key={sz.name}
+                      onClick={() => setSelectedSize(sz.name)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedSize === sz.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
                     >
-                      {sz}
+                      {sz.name}
                     </button>
                   ))}
                 </div>
@@ -702,11 +815,14 @@ export default function Home() {
                 <div className="flex gap-2 flex-wrap">
                   {modalVariants.colors.map((clr) => (
                     <button
-                      key={clr}
-                      onClick={() => setSelectedColor(clr)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedColor === clr ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                      key={clr.name}
+                      onClick={() => setSelectedColor(clr.name)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${selectedColor === clr.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
                     >
-                      {clr}
+                      {clr.image && (
+                        <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
+                      )}
+                      {clr.name}
                     </button>
                   ))}
                 </div>
@@ -719,11 +835,11 @@ export default function Home() {
                 <div className="flex gap-2 flex-wrap">
                   {modalVariants.types.map((tp) => (
                     <button
-                      key={tp}
-                      onClick={() => setSelectedType(tp)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedType === tp ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                      key={tp.name}
+                      onClick={() => setSelectedType(tp.name)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedType === tp.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
                     >
-                      {tp}
+                      {tp.name}
                     </button>
                   ))}
                 </div>
