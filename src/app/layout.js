@@ -4,6 +4,9 @@ import { CartProvider } from "@/context/CartContext";
 export const metadata = {
   title: "Ishi Kidijitali — Agiza. Shea. Pata.",
   description: "Bidhaa kutoka China na Dubai. Shea na upate commission hadi 35%.",
+  verification: {
+    google: "upffZKGHZ668TseEQUcSR68GIqoO2rXdnonyAFUvBLI",
+  },
 };
 
 export default function RootLayout({ children }) {
