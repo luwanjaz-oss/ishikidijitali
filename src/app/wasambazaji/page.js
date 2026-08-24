@@ -12,6 +12,36 @@ function fmtTZS(n) {
   return (n || 0).toLocaleString("en-US") + " TZS";
 }
 
+// Hali ya malipo ya mteja - inasomwa moja kwa moja kutoka Supabase
+// (orders.payment_status), inayowekwa na Admin. Inamsaidia msambazaji
+// kujua kama mteja wake amelipa, atalipa mzigo ukifika, kalipa kidogo,
+// au bado hajalipa kabisa.
+function paymentStatusLabel(value) {
+  switch (value) {
+    case "amelipa_kamili":
+      return "✅ Amelipa Kamili";
+    case "amelipa_kidogo":
+      return "💰 Amelipa Kidogo (Deposit)";
+    case "atalipa_mzigo_ukifika":
+      return "📦 Atalipa Mzigo Ukifika";
+    default:
+      return "❌ Hajalipa Bado";
+  }
+}
+
+function paymentStatusColor(value) {
+  switch (value) {
+    case "amelipa_kamili":
+      return "bg-green-100 text-green-700";
+    case "amelipa_kidogo":
+      return "bg-amber-100 text-amber-700";
+    case "atalipa_mzigo_ukifika":
+      return "bg-blue-100 text-blue-700";
+    default:
+      return "bg-red-100 text-red-700";
+  }
+}
+
 function generateRefCode(fullName) {
   const base =
     (fullName || "ISHIKI")
@@ -255,6 +285,9 @@ export default function WasambajiPage() {
                 onChange={(e) => setPhone(e.target.value)}
                 className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
               />
+              <p className="text-[10px] text-gray-400 mt-1">
+                Hakikisha namba hii ina WhatsApp - ndiyo utakayowasiliana nayo kuhusu oda na malipo.
+              </p>
             </div>
 
             {regError && (
@@ -380,7 +413,7 @@ export default function WasambajiPage() {
                   return (
                     <div
                       key={order.id}
-                      className="flex justify-between items-center p-3 border-b border-gray-100 text-xs gap-2"
+                      className="flex justify-between items-start p-3 border-b border-gray-100 text-xs gap-2"
                     >
                       <div>
                         <p className="font-semibold text-gray-800">
@@ -389,6 +422,9 @@ export default function WasambajiPage() {
                         <p className="text-gray-400">
                           {order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}
                         </p>
+                        <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${paymentStatusColor(order.payment_status)}`}>
+                          {paymentStatusLabel(order.payment_status)}
+                        </span>
                       </div>
                       <div className="text-right">
                         <p className="font-medium text-gray-600">

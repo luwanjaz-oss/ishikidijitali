@@ -17,6 +17,31 @@ const STATUS_OPTIONS = [
   { value: "cancelled", label: "❌ Imeghairiwa" },
 ];
 
+const PAYMENT_STATUS_OPTIONS = [
+  { value: "hajalipa", label: "❌ Hajalipa" },
+  { value: "atalipa_mzigo_ukifika", label: "📦 Atalipa Mzigo Ukifika (COD)" },
+  { value: "amelipa_kidogo", label: "💰 Amelipa Kidogo (Deposit)" },
+  { value: "amelipa_kamili", label: "✅ Amelipa Kamili" },
+];
+
+function paymentStatusLabel(value) {
+  const found = PAYMENT_STATUS_OPTIONS.find((s) => s.value === value);
+  return found ? found.label : "❌ Hajalipa";
+}
+
+function paymentStatusColor(value) {
+  switch (value) {
+    case "amelipa_kamili":
+      return "bg-green-100 text-green-700";
+    case "amelipa_kidogo":
+      return "bg-amber-100 text-amber-700";
+    case "atalipa_mzigo_ukifika":
+      return "bg-blue-100 text-blue-700";
+    default:
+      return "bg-red-100 text-red-700";
+  }
+}
+
 function fmtTZS(n) {
   return (n || 0).toLocaleString("en-US") + " TZS";
 }
@@ -67,6 +92,10 @@ export default function AdminPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedId, setExpandedId] = useState(null);
 
+  // Simu za wasambazaji (ref_code -> phone/full_name), inatumika kutuma
+  // WhatsApp haraka bila kuingia jedwali la affiliates kila wakati.
+  const [affiliatesMap, setAffiliatesMap] = useState({});
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const saved = sessionStorage.getItem("ishiki_admin_authed");
@@ -77,8 +106,23 @@ export default function AdminPage() {
   useEffect(() => {
     if (!authenticated) return;
     loadOrders();
+    loadAffiliates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated]);
+
+  async function loadAffiliates() {
+    try {
+      const { data, error } = await supabase.from("affiliates").select("ref_code, phone, full_name");
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach((a) => {
+        map[a.ref_code] = { phone: a.phone, full_name: a.full_name };
+      });
+      setAffiliatesMap(map);
+    } catch (err) {
+      console.error("Load affiliates error:", err);
+    }
+  }
 
   // NOTIFICATION - inatuma notification ya browser + sauti kila mara oda
   // mpya inapoingia, wakati dashboard hii iko wazi (real-time kupitia Supabase).
@@ -174,6 +218,28 @@ export default function AdminPage() {
     } catch (err) {
       console.error("Status update error:", err);
       alert("Imeshindwa kubadilisha status: " + (err.message || "unknown error"));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  // Hali ya MALIPO (siyo usafirishaji) - inaonekana moja kwa moja kwenye
+  // dashboard ya msambazaji, ili aelewe kama mteja wake amelipa, atalipa
+  // mzigo ukifika, amelipa kidogo, au bado hajalipa kabisa.
+  async function handlePaymentStatusChange(orderId, newPaymentStatus) {
+    setUpdatingId(`pay-${orderId}`);
+    try {
+      const { error } = await supabase
+        .from("orders")
+        .update({ payment_status: newPaymentStatus })
+        .eq("id", orderId);
+      if (error) throw error;
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, payment_status: newPaymentStatus } : o))
+      );
+    } catch (err) {
+      console.error("Payment status update error:", err);
+      alert("Imeshindwa kubadilisha hali ya malipo: " + (err.message || "unknown error"));
     } finally {
       setUpdatingId(null);
     }
@@ -424,7 +490,7 @@ export default function AdminPage() {
 
                   <div className="mt-3 pt-3 border-t border-gray-100">
                     <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
-                      Badilisha Status:
+                      Badilisha Status (Usafirishaji):
                     </label>
                     <select
                       value={order.status || "pending"}
@@ -440,16 +506,51 @@ export default function AdminPage() {
                     </select>
                   </div>
 
-                  {order.customer_phone && (
-                    <a
-                      href={`https://wa.me/255${order.customer_phone.replace(/^0/, "")}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block text-center mt-2 bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold py-2 rounded-xl transition-colors"
+                  <div className="mt-2">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                      Hali ya Malipo:
+                    </label>
+                    <select
+                      value={order.payment_status || "hajalipa"}
+                      onChange={(e) => handlePaymentStatusChange(order.id, e.target.value)}
+                      disabled={updatingId === `pay-${order.id}`}
+                      className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
                     >
-                      💬 Wasiliana na Mteja WhatsApp
-                    </a>
-                  )}
+                      {PAYMENT_STATUS_OPTIONS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={`inline-block mt-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${paymentStatusColor(order.payment_status)}`}>
+                      {paymentStatusLabel(order.payment_status)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    {order.customer_phone && (
+                      <a
+                        href={`https://wa.me/255${order.customer_phone.replace(/^0/, "")}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-center bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold py-2 rounded-xl transition-colors"
+                      >
+                        💬 Mteja WhatsApp
+                      </a>
+                    )}
+                    {order.ref_code && affiliatesMap[order.ref_code]?.phone && (
+                      <a
+                        href={`https://wa.me/255${affiliatesMap[order.ref_code].phone.replace(/^0/, "")}?text=${encodeURIComponent(
+                          `Habari ${affiliatesMap[order.ref_code].full_name || "Msambazaji"}, kuhusu Oda #${order.id}: hali ya malipo ni "${paymentStatusLabel(order.payment_status).replace(/[^\w\s()]/g, "").trim()}".`
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-center bg-[#12182B] hover:bg-[#1c2540] text-white text-xs font-bold py-2 rounded-xl transition-colors"
+                      >
+                        💬 Msambazaji WhatsApp
+                      </a>
+                    )}
+                  </div>
                 </div>
               );
             })}
