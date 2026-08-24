@@ -43,7 +43,7 @@ export default function WasambajiPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setSiteUrl(window.location.origin);
-      const saved = localStorage.getItem("ishiki_ref_code");
+      const saved = localStorage.getItem("ishiki_affiliate_session");
       if (saved) {
         setRefCode(saved);
       }
@@ -148,10 +148,34 @@ export default function WasambajiPage() {
       const existing = existingRows && existingRows.length > 0 ? existingRows[0] : null;
 
       if (existing) {
-        localStorage.setItem("ishiki_ref_code", existing.ref_code);
+        localStorage.setItem("ishiki_affiliate_session", existing.ref_code);
         setRefCode(existing.ref_code);
         setRegSubmitting(false);
         return;
+      }
+
+      // SHERIA MPYA: Kama kifaa hiki kilifikia tovuti kupitia link ya
+      // msambazaji mwingine (?ref=...), mtu huyu HAWEZI kujiunga kama
+      // msambazaji mpaka kwanza awe amenunua bidhaa kupitia link hiyo
+      // (namba yake ya simu ionekane kwenye "orders" ikiwa na ref_code hiyo).
+      const referringCode = typeof window !== "undefined" ? localStorage.getItem("ishiki_ref_code") : null;
+      if (referringCode) {
+        const { data: purchaseRows, error: purchaseErr } = await supabase
+          .from("orders")
+          .select("id")
+          .eq("ref_code", referringCode)
+          .eq("customer_phone", cleanPhone)
+          .limit(1);
+
+        if (purchaseErr) throw purchaseErr;
+
+        if (!purchaseRows || purchaseRows.length === 0) {
+          setRegError(
+            "Kabla ya kujiunga kama msambazaji, ni lazima kwanza ununue bidhaa kupitia link uliyopewa. Baada ya kununua, jaribu kujisajili tena kwa namba hiyo hiyo ya simu."
+          );
+          setRegSubmitting(false);
+          return;
+        }
       }
 
       let created = null;
@@ -176,7 +200,7 @@ export default function WasambajiPage() {
 
       if (!created) throw lastError || new Error("Imeshindwa kujisajili");
 
-      localStorage.setItem("ishiki_ref_code", created.ref_code);
+      localStorage.setItem("ishiki_affiliate_session", created.ref_code);
       setAffiliate(created);
       setRefCode(created.ref_code);
     } catch (err) {
@@ -286,7 +310,7 @@ export default function WasambajiPage() {
             </div>
             <button
               onClick={() => {
-                localStorage.removeItem("ishiki_ref_code");
+                localStorage.removeItem("ishiki_affiliate_session");
                 setRefCode(null);
                 setAffiliate(null);
                 setOrders([]);
