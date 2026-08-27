@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { supabase } from "../lib/supabaseClient";
 import { useCart } from "../context/CartContext";
@@ -99,6 +99,18 @@ const FURSA_ZA_ISHIKI = [
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
 
+// BILLBOARD YA CHAPA - LVR (Built Different). Picha zinabadilika (crossfade)
+// kila sekunde chache, na maneno ya chapa yanaonekana juu yake.
+// TAHADHARI: hizi ni "signed URLs" zenye tarehe ya mwisho (~mwaka 1) -
+// baada ya hapo zitahitaji kusasishwa, au fanya bucket iwe Public kwa link za kudumu.
+const LVR_BILLBOARD_IMAGES = [
+  "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_48_50%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ4XzUwIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNDgsImV4cCI6MTgxOTM2NDA0OH0.mLJeqfr-EIlF2a5SCCts9emJrBVGzuRbigJcYqH7zTo",
+  "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_49_15%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ5XzE1IFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNzksImV4cCI6MTgxOTM2NDA3OX0.EXl8fGupFEn1VijGdhwvUSw_02Vya2IM_U8eD-LblHA",
+  "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_53_03%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzUzXzAzIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwOTYsImV4cCI6MTgxOTM2NDA5Nn0.MW04Wzi1GwN1uZIYBAKA2deXBRvmSZHd2hB5BRdSVEo",
+];
+
+const LVR_WHATSAPP_MESSAGE = "Habari, nataka kuagiza bidhaa za LVR (Built Different) - t-shirt/cap.";
+
 const SOCIAL_LINKS = {
   pinterest: "https://pin.it/PxxgDcZDk",
   instagram: "https://www.instagram.com/ishikidijitali?igsi=MWhibWk5Nzg0ZDNtcg%3D%3D&utm_source=qr",
@@ -157,6 +169,55 @@ function getProductImages(p) {
   return p.image_url.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+// TRACKING ANIMATION - inatafsiri "status" ya oda kuwa asilimia ya safari
+// (kwa ajili ya animation), na kuamua ikoni (✈️ ndege / 🚢 meli / 🚌 basi)
+// kwa kuangalia "origin" ya bidhaa zilizoagizwa (kwa kulinganisha majina
+// na orodha ya "products" iliyopakiwa tayari kwenye ukurasa huu).
+const STATUS_PROGRESS = {
+  pending: 8,
+  inasindikwa: 30,
+  inasafirishwa: 65,
+  imefika_mkoani: 90,
+  delivered: 100,
+  cancelled: 0,
+};
+
+function parseOrderItems(itemsRaw) {
+  if (!itemsRaw) return [];
+  try {
+    const parsed = typeof itemsRaw === "string" ? JSON.parse(itemsRaw) : itemsRaw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getOrderJourney(order, products) {
+  const items = parseOrderItems(order.items);
+  let origin = "Dar es Salaam";
+  let isInternational = false;
+
+  items.forEach((it) => {
+    const prod = products.find((p) => p.name === it.name);
+    if (prod?.origin && !/dar\s*es\s*salaam/i.test(prod.origin)) {
+      isInternational = true;
+      origin = prod.origin;
+    }
+  });
+
+  const icon = isInternational ? (/china/i.test(origin) ? "🚢" : "✈️") : "🚌";
+  const progress = STATUS_PROGRESS[order.status] ?? STATUS_PROGRESS.pending;
+
+  return {
+    icon,
+    progress,
+    fromLabel: isInternational ? origin : "Dar es Salaam",
+    midLabel: isInternational ? "Dar es Salaam" : null,
+    toLabel: order.region || "Mkoani",
+    isCancelled: order.status === "cancelled",
+  };
+}
+
 export default function Home() {
   const cartContext = useCart();
   const cart = cartContext.cart || [];
@@ -185,8 +246,31 @@ export default function Home() {
 
   const [routeIdx, setRouteIdx] = useState(0);
   const [fursaIdx, setFursaIdx] = useState(0);
+  const [billboardIdx, setBillboardIdx] = useState(0);
   const [category, setCategory] = useState("wote");
   const [openFaqIdx, setOpenFaqIdx] = useState(0);
+
+  // JUST ADDED bidhaa kikapuni - inaonyesha chaguo "Endelea Kununua" au
+  // "Nenda Kikapuni" badala ya kufunga modal moja kwa moja (watu walikuwa
+  // wanachanganyikiwa wakidhani oda imekamilika).
+  const [justAddedToCart, setJustAddedToCart] = useState(false);
+
+  // SWIPE - kwa picha za bidhaa (modal na billboard) - mteja anavuta
+  // (swipe) kubadilisha picha, siyo kubofya thumbnail moja baada ya moja.
+  const swipeStartX = useRef(null);
+  function handleSwipeStart(e) {
+    swipeStartX.current = e.touches ? e.touches[0].clientX : e.clientX;
+  }
+  function handleSwipeEnd(e, length, idx, setIdx) {
+    if (swipeStartX.current === null || length <= 1) return;
+    const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const diff = endX - swipeStartX.current;
+    if (Math.abs(diff) > 35) {
+      if (diff < 0) setIdx((idx + 1) % length);
+      else setIdx((idx - 1 + length) % length);
+    }
+    swipeStartX.current = null;
+  }
 
   // TRACKING - inatafuta oda halisi kwenye Supabase kwa namba ya simu
   const [trackingInput, setTrackingInput] = useState("");
@@ -205,6 +289,11 @@ export default function Home() {
       if (ref) {
         setActiveRefCode(ref);
         localStorage.setItem("ishiki_ref_code", ref);
+      }
+      // Kutoka ukurasa wa bidhaa: "Nenda Kikapuni" inaongoza hapa na ?cart=1,
+      // hii inafungua drawer ya kikapu moja kwa moja.
+      if (params.get("cart") === "1") {
+        setShowCartDrawer(true);
       }
     }
   }, []);
@@ -234,6 +323,13 @@ export default function Home() {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    const t = setInterval(() => {
+      setBillboardIdx((i) => (i + 1) % LVR_BILLBOARD_IMAGES.length);
+    }, 4000);
+    return () => clearInterval(t);
+  }, []);
+
   const handleOpenProductModal = (product) => {
     setSelectedProduct(product);
     const { sizes, colors, types } = getProductVariants(product);
@@ -241,6 +337,7 @@ export default function Home() {
     setSelectedColor(colors[0]?.name || "");
     setSelectedType(types[0]?.name || "");
     setModalGalleryIdx(0);
+    setJustAddedToCart(false);
   };
 
   const handleAddToCartWithOptions = () => {
@@ -267,7 +364,19 @@ export default function Home() {
       qty: 1,
     };
     if (addToCart) addToCart(itemWithOptions);
+    // Badala ya kufunga modal moja kwa moja, mwoneshe mteja chaguo:
+    // "Endelea Kununua" au "Nenda Kikapuni" - watu walikuwa wanachanganyikiwa.
+    setJustAddedToCart(true);
+  };
+
+  const handleContinueShopping = () => {
     setSelectedProduct(null);
+    setJustAddedToCart(false);
+  };
+
+  const handleGoToCartFromModal = () => {
+    setSelectedProduct(null);
+    setJustAddedToCart(false);
     setCheckoutStatus("idle");
     setShowCartDrawer(true);
   };
@@ -650,6 +759,54 @@ export default function Home() {
         </div>
       </section>
 
+      {/* BILLBOARD - LVR (BUILT DIFFERENT) */}
+      <section className="relative w-full h-[420px] sm:h-[480px] overflow-hidden">
+        {LVR_BILLBOARD_IMAGES.map((img, i) => (
+          <img
+            key={i}
+            src={img}
+            alt="LVR Built Different"
+            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000"
+            style={{ opacity: i === billboardIdx ? 1 : 0 }}
+          />
+        ))}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/40"></div>
+
+        <div className="absolute inset-0 flex flex-col items-center justify-end text-center px-5 pb-8 sm:pb-10">
+          <span className="text-white/70 text-[10px] font-bold uppercase tracking-[0.3em] mb-2">
+            Streetwear • Lifestyle
+          </span>
+          <h2 className="text-white text-2xl sm:text-4xl font-extrabold tracking-tight mb-1">LVR</h2>
+          <p className="text-white/80 text-xs sm:text-sm italic mb-3">built different</p>
+          <p className="text-white/90 text-xs sm:text-sm max-w-md leading-relaxed mb-1">
+            LVR is more than streetwear — it's a mindset.
+          </p>
+          <p className="text-white/70 text-[11px] sm:text-xs max-w-md leading-relaxed mb-4">
+            Every piece represents confidence, individuality, and the courage to build your own path.
+          </p>
+          <p className="text-[#E8A93B] text-sm sm:text-base font-extrabold tracking-widest mb-5">
+            KEEP MAKING. UNTIL WE WIN.
+          </p>
+          <a
+            href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(LVR_WHATSAPP_MESSAGE)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="bg-white hover:bg-gray-100 text-[#12182B] px-6 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-xl transition-colors"
+          >
+            Order LVR
+          </a>
+        </div>
+
+        <div className="absolute top-4 right-4 flex gap-1.5">
+          {LVR_BILLBOARD_IMAGES.map((_, i) => (
+            <span
+              key={i}
+              className={`h-1.5 rounded-full transition-all duration-500 ${i === billboardIdx ? "w-6 bg-white" : "w-1.5 bg-white/40"}`}
+            ></span>
+          ))}
+        </div>
+      </section>
+
       {/* DUKA KUU */}
       <section id="duka" className="max-w-6xl mx-auto px-4 py-10">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -832,111 +989,138 @@ export default function Home() {
           <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
             <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
 
-            {(() => {
-              const sizeObj = modalVariants.sizes.find((s) => s.name === selectedSize);
-              const colorObj = modalVariants.colors.find((c) => c.name === selectedColor);
-              const typeObj = modalVariants.types.find((t) => t.name === selectedType);
-              const variantImage = colorObj?.image || typeObj?.image || sizeObj?.image || null;
-              const variantPrice = colorObj?.price ?? typeObj?.price ?? sizeObj?.price ?? null;
-              const displayImage = variantImage || modalImages[modalGalleryIdx];
-              const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
+            {justAddedToCart ? (
+              <div className="flex flex-col items-center text-center py-8 px-2">
+                <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-3">
+                  <span className="text-2xl">✅</span>
+                </div>
+                <h3 className="text-base font-bold text-[#12182B] mb-1">Imeongezwa Kikapuni!</h3>
+                <p className="text-xs text-gray-500 mb-6">{selectedProduct.name}</p>
+                <div className="w-full space-y-2">
+                  <button
+                    onClick={handleContinueShopping}
+                    className="w-full bg-white border-2 border-[#12182B] text-[#12182B] text-xs font-bold py-3 rounded-xl transition-all"
+                  >
+                    🛍️ Endelea Kununua
+                  </button>
+                  <button
+                    onClick={handleGoToCartFromModal}
+                    className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow"
+                  >
+                    🛒 Nenda Kikapuni ({cartCount + 1})
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {(() => {
+                  const sizeObj = modalVariants.sizes.find((s) => s.name === selectedSize);
+                  const colorObj = modalVariants.colors.find((c) => c.name === selectedColor);
+                  const typeObj = modalVariants.types.find((t) => t.name === selectedType);
+                  const variantImage = colorObj?.image || typeObj?.image || sizeObj?.image || null;
+                  const variantPrice = colorObj?.price ?? typeObj?.price ?? sizeObj?.price ?? null;
+                  const displayImage = variantImage || modalImages[modalGalleryIdx];
+                  const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
 
-              return (
-                <>
-                  {(displayImage || modalImages.length > 0) && (
-                    <div className="mb-4">
-                      <div className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden">
-                        {displayImage ? (
-                          <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain" />
-                        ) : null}
-                      </div>
-                      {!variantImage && modalImages.length > 1 && (
-                        <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
-                          {modalImages.map((img, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setModalGalleryIdx(i)}
-                              className={`shrink-0 w-12 h-12 rounded-lg border-2 overflow-hidden ${i === modalGalleryIdx ? "border-[#17A398]" : "border-gray-200"}`}
-                            >
-                              <img src={img} alt="" className="w-full h-full object-cover" />
-                            </button>
-                          ))}
+                  return (
+                    <>
+                      {(displayImage || modalImages.length > 0) && (
+                        <div className="mb-4">
+                          <div
+                            className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden select-none touch-pan-y"
+                            onTouchStart={handleSwipeStart}
+                            onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, modalImages.length, modalGalleryIdx, setModalGalleryIdx)}
+                          >
+                            {displayImage ? (
+                              <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain pointer-events-none" draggable={false} />
+                            ) : null}
+                          </div>
+                          {!variantImage && modalImages.length > 1 && (
+                            <div className="flex justify-center gap-1.5 mt-2">
+                              {modalImages.map((_, i) => (
+                                <span
+                                  key={i}
+                                  className={`h-1.5 rounded-full transition-all ${i === modalGalleryIdx ? "w-5 bg-[#17A398]" : "w-1.5 bg-gray-300"}`}
+                                ></span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
+
+                      <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
+                      <p className="text-xs font-bold text-[#17A398] mb-4">
+                        {fmtTZS(displayPrice)}
+                        {variantPrice !== null && variantPrice !== selectedProduct.price && (
+                          <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
+                        )}
+                      </p>
+                    </>
+                  );
+                })()}
+
+                {modalVariants.sizes.length > 0 && (
+                  <div className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua Size:</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {modalVariants.sizes.map((sz) => (
+                        <button
+                          key={sz.name}
+                          onClick={() => setSelectedSize(sz.name)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedSize === sz.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                        >
+                          {sz.name}
+                        </button>
+                      ))}
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-                  <p className="text-xs font-bold text-[#17A398] mb-4">
-                    {fmtTZS(displayPrice)}
-                    {variantPrice !== null && variantPrice !== selectedProduct.price && (
-                      <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
-                    )}
-                  </p>
-                </>
-              );
-            })()}
+                {modalVariants.colors.length > 0 && (
+                  <div className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua Rangi:</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {modalVariants.colors.map((clr) => (
+                        <button
+                          key={clr.name}
+                          onClick={() => setSelectedColor(clr.name)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${selectedColor === clr.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                        >
+                          {clr.image && (
+                            <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
+                          )}
+                          {clr.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-            {modalVariants.sizes.length > 0 && (
-              <div className="mb-4">
-                <label className="text-xs font-bold block mb-1">Chagua Size:</label>
-                <div className="flex gap-2 flex-wrap">
-                  {modalVariants.sizes.map((sz) => (
-                    <button
-                      key={sz.name}
-                      onClick={() => setSelectedSize(sz.name)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedSize === sz.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
-                    >
-                      {sz.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                {modalVariants.types.length > 0 && (
+                  <div className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo (mfano Watts, Voltage, 220V/Battery):</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {modalVariants.types.map((tp) => (
+                        <button
+                          key={tp.name}
+                          onClick={() => setSelectedType(tp.name)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedType === tp.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                        >
+                          {tp.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAddToCartWithOptions}
+                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
+                >
+                  Weka Kikapuni 🛒
+                </button>
+              </>
             )}
-
-            {modalVariants.colors.length > 0 && (
-              <div className="mb-4">
-                <label className="text-xs font-bold block mb-1">Chagua Rangi:</label>
-                <div className="flex gap-2 flex-wrap">
-                  {modalVariants.colors.map((clr) => (
-                    <button
-                      key={clr.name}
-                      onClick={() => setSelectedColor(clr.name)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${selectedColor === clr.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
-                    >
-                      {clr.image && (
-                        <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
-                      )}
-                      {clr.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {modalVariants.types.length > 0 && (
-              <div className="mb-4">
-                <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo (mfano Watts, Voltage, 220V/Battery):</label>
-                <div className="flex gap-2 flex-wrap">
-                  {modalVariants.types.map((tp) => (
-                    <button
-                      key={tp.name}
-                      onClick={() => setSelectedType(tp.name)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedType === tp.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
-                    >
-                      {tp.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={handleAddToCartWithOptions}
-              className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
-            >
-              Weka Kikapuni 🛒
-            </button>
           </div>
         </div>
       )}
@@ -973,23 +1157,58 @@ export default function Home() {
 
             {trackingResults && (
               <div className="space-y-3 mb-4">
-                {trackingResults.map((order) => (
-                  <div key={order.id} className="p-3 bg-[#F7F3EA] rounded-xl text-xs">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-bold text-[#12182B]">Oda #{order.id}</span>
-                      <span className="bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full text-[10px] uppercase">
-                        {order.status || "pending"}
-                      </span>
+                {trackingResults.map((order) => {
+                  const journey = getOrderJourney(order, products);
+                  return (
+                    <div key={order.id} className="p-3 bg-[#F7F3EA] rounded-xl text-xs">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[#12182B]">Oda #{order.id}</span>
+                        <span className="bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full text-[10px] uppercase">
+                          {order.status || "pending"}
+                        </span>
+                      </div>
+                      <p className="text-gray-600">📍 {order.region}</p>
+                      <p className="text-gray-600">💵 {fmtTZS(order.total)}</p>
+                      <p className="text-gray-400 text-[10px] mt-1 mb-2">
+                        {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
+                      </p>
+
+                      {/* ANIMATION YA USAFIRI - inasogea kulingana na status */}
+                      {!journey.isCancelled && (
+                        <div className="mt-2 pt-2 border-t border-black/5">
+                          <div className="flex justify-between text-[9px] text-gray-500 font-semibold mb-2">
+                            <span>{journey.fromLabel}</span>
+                            {journey.midLabel && <span>{journey.midLabel}</span>}
+                            <span>{journey.toLabel}</span>
+                          </div>
+                          <div className="relative h-1.5 bg-gray-200 rounded-full overflow-visible">
+                            <div
+                              className="absolute left-0 top-0 h-full bg-[#17A398] rounded-full transition-all duration-1000 ease-out"
+                              style={{ width: `${journey.progress}%` }}
+                            ></div>
+                            <div
+                              className="absolute top-1/2 tracking-icon-move"
+                              style={{ left: `${journey.progress}%`, transform: "translate(-50%, -50%)" }}
+                            >
+                              <span className="text-base inline-block drop-shadow">{journey.icon}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <p className="text-gray-600">📍 {order.region}</p>
-                    <p className="text-gray-600">💵 {fmtTZS(order.total)}</p>
-                    <p className="text-gray-400 text-[10px] mt-1">
-                      {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
+            <style jsx>{`
+              @keyframes trackingIconBob {
+                0%, 100% { margin-top: 0px; }
+                50% { margin-top: -3px; }
+              }
+              .tracking-icon-move {
+                animation: trackingIconBob 1.4s ease-in-out infinite;
+              }
+            `}</style>
 
             <a
               href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nataka msaada kuhusu mzigo wangu.")}`}

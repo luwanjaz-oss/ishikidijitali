@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
@@ -69,6 +69,22 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true);
   const [activeImg, setActiveImg] = useState(0);
   const [added, setAdded] = useState(false);
+
+  // SWIPE - mteja anavuta picha kubadilisha, siyo kubofya thumbnail.
+  const swipeStartX = useRef(null);
+  function handleSwipeStart(e) {
+    swipeStartX.current = e.touches ? e.touches[0].clientX : e.clientX;
+  }
+  function handleSwipeEnd(e, length) {
+    if (swipeStartX.current === null || length <= 1) return;
+    const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const diff = endX - swipeStartX.current;
+    if (Math.abs(diff) > 35) {
+      if (diff < 0) setActiveImg((i) => (i + 1) % length);
+      else setActiveImg((i) => (i - 1 + length) % length);
+    }
+    swipeStartX.current = null;
+  }
 
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
@@ -178,7 +194,6 @@ export default function ProductDetailPage() {
       qty: 1,
     });
     setAdded(true);
-    setTimeout(() => setAdded(false), 1600);
   }
 
   if (loading) {
@@ -223,29 +238,28 @@ export default function ProductDetailPage() {
 
       <section className="max-w-5xl mx-auto px-4 sm:px-5 py-6 sm:py-10">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-10">
-          {/* GALLERY - MOBILE FRIENDLY, PICHA ZAIDI YA 5 ZINAWEZEKANA */}
+          {/* GALLERY - MOBILE FRIENDLY, PICHA ZAIDI YA 5 ZINAWEZEKANA - KUVUTA (SWIPE) */}
           <div>
-            <div className="w-full h-64 sm:h-96 bg-white rounded-2xl border border-[#E4DFD2] flex items-center justify-center overflow-hidden">
+            <div
+              className="w-full h-64 sm:h-96 bg-white rounded-2xl border border-[#E4DFD2] flex items-center justify-center overflow-hidden select-none touch-pan-y"
+              onTouchStart={handleSwipeStart}
+              onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, images.length)}
+            >
               {variantImage ? (
-                <img src={variantImage} alt={product.name} className="h-full w-full object-contain" />
+                <img src={variantImage} alt={product.name} className="h-full w-full object-contain pointer-events-none" draggable={false} />
               ) : images[activeImg] ? (
-                <img src={images[activeImg]} alt={product.name} className="h-full w-full object-contain" />
+                <img src={images[activeImg]} alt={product.name} className="h-full w-full object-contain pointer-events-none" draggable={false} />
               ) : (
                 <span className="text-6xl">{product.emoji || "📦"}</span>
               )}
             </div>
             {!variantImage && images.length > 1 && (
-              <div className="flex gap-2 mt-3 overflow-x-auto pb-1 snap-x snap-mandatory">
-                {images.map((img, i) => (
-                  <button
+              <div className="flex justify-center gap-1.5 mt-3">
+                {images.map((_, i) => (
+                  <span
                     key={i}
-                    onClick={() => setActiveImg(i)}
-                    className={`shrink-0 snap-start w-16 h-16 rounded-xl border-2 overflow-hidden ${
-                      i === activeImg ? "border-[#17A398]" : "border-gray-200"
-                    }`}
-                  >
-                    <img src={img} alt="" className="w-full h-full object-cover" />
-                  </button>
+                    className={`h-1.5 rounded-full transition-all ${i === activeImg ? "w-5 bg-[#17A398]" : "w-1.5 bg-gray-300"}`}
+                  ></span>
                 ))}
               </div>
             )}
@@ -416,12 +430,32 @@ export default function ProductDetailPage() {
               )}
             </div>
 
-            <button
-              onClick={handleAdd}
-              className="w-full bg-[#12182B] hover:bg-black text-white py-3.5 rounded-lg font-semibold text-sm transition"
-            >
-              {added ? "Imeongezwa kikapuni ✓" : "Ongeza kikapuni"}
-            </button>
+            {!added ? (
+              <button
+                onClick={handleAdd}
+                className="w-full bg-[#12182B] hover:bg-black text-white py-3.5 rounded-lg font-semibold text-sm transition"
+              >
+                Ongeza kikapuni
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-center text-xs font-bold text-green-600 mb-1">✅ Imeongezwa Kikapuni!</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Link
+                    href="/"
+                    className="w-full bg-white border-2 border-[#12182B] text-[#12182B] py-3 rounded-lg font-semibold text-xs transition text-center"
+                  >
+                    🛍️ Endelea Kununua
+                  </Link>
+                  <Link
+                    href="/?cart=1"
+                    className="w-full bg-[#17A398] hover:bg-[#13847b] text-white py-3 rounded-lg font-semibold text-xs transition text-center"
+                  >
+                    🛒 Nenda Kikapuni
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
