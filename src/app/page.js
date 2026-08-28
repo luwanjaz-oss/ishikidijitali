@@ -59,19 +59,30 @@ function normalizeVariantList(arr) {
 }
 
 function getProductVariants(p) {
-  if (!p?.variants) return { sizes: [], colors: [], types: [] };
+  if (!p?.variants) return { sizes: [], colors: [], types: [], options: {} };
   let v = p.variants;
   if (typeof v === "string") {
     try {
       v = JSON.parse(v);
     } catch {
-      return { sizes: [], colors: [], types: [] };
+      return { sizes: [], colors: [], types: [], options: {} };
     }
+  }
+  // "options" ni MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity,
+  // n.k) - kwa bidhaa ambazo hazifai kwenye sizes/colors/types za kawaida.
+  // Muundo: { "Uwezo (Watts)": [{"name":"200W10Ah","price":79000}, ...] }
+  const options = {};
+  if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
+    Object.entries(v.options).forEach(([label, arr]) => {
+      const list = normalizeVariantList(arr);
+      if (list.length > 0) options[label] = list;
+    });
   }
   return {
     sizes: normalizeVariantList(v.sizes),
     colors: normalizeVariantList(v.colors),
     types: normalizeVariantList(v.types),
+    options,
   };
 }
 
@@ -99,14 +110,32 @@ const FURSA_ZA_ISHIKI = [
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
 
-// BILLBOARD YA CHAPA - LVR (Built Different). Picha zinabadilika (crossfade)
-// kila sekunde chache, na maneno ya chapa yanaonekana juu yake.
-// TAHADHARI: hizi ni "signed URLs" zenye tarehe ya mwisho (~mwaka 1) -
+// BILLBOARD YA CHAPA - LVR (Built Different). "Slides" zinabadilika kwa
+// zamu - picha (na "Order Now" tu juu yake) na slide YA MANENO peke yake
+// (background nyeusi, maneno makubwa yanayosomeka vizuri, Kiingereza +
+// tafsiri ya Kiswahili). Hii inaepuka tatizo la maneno kupotea juu ya picha.
+// TAHADHARI: link za picha ni "signed URLs" zenye tarehe ya mwisho (~mwaka 1) -
 // baada ya hapo zitahitaji kusasishwa, au fanya bucket iwe Public kwa link za kudumu.
-const LVR_BILLBOARD_IMAGES = [
-  "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_48_50%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ4XzUwIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNDgsImV4cCI6MTgxOTM2NDA0OH0.mLJeqfr-EIlF2a5SCCts9emJrBVGzuRbigJcYqH7zTo",
-  "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_49_15%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ5XzE1IFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNzksImV4cCI6MTgxOTM2NDA3OX0.EXl8fGupFEn1VijGdhwvUSw_02Vya2IM_U8eD-LblHA",
-  "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_53_03%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzUzXzAzIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwOTYsImV4cCI6MTgxOTM2NDA5Nn0.MW04Wzi1GwN1uZIYBAKA2deXBRvmSZHd2hB5BRdSVEo",
+const LVR_BILLBOARD_SLIDES = [
+  {
+    type: "image",
+    src: "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_48_50%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ4XzUwIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNDgsImV4cCI6MTgxOTM2NDA0OH0.mLJeqfr-EIlF2a5SCCts9emJrBVGzuRbigJcYqH7zTo",
+  },
+  {
+    type: "image",
+    src: "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_49_15%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ5XzE1IFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNzksImV4cCI6MTgxOTM2NDA3OX0.EXl8fGupFEn1VijGdhwvUSw_02Vya2IM_U8eD-LblHA",
+  },
+  {
+    type: "text",
+    en: "LVR is more than streetwear — it's a mindset. Every piece represents confidence, individuality, and the courage to build your own path.",
+    sw: "LVR si mavazi ya kawaida tu — ni mtazamo wa maisha. Kila kipande kinawakilisha ujasiri, upekee, na ushupavu wa kujijengea njia yako mwenyewe.",
+    slogan: "KEEP MAKING. UNTIL WE WIN.",
+    sloganSw: "ENDELEA KUTENGENEZA. MPAKA TUSHINDE.",
+  },
+  {
+    type: "image",
+    src: "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_53_03%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzUzXzAzIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwOTYsImV4cCI6MTgxOTM2NDA5Nn0.MW04Wzi1GwN1uZIYBAKA2deXBRvmSZHd2hB5BRdSVEo",
+  },
 ];
 
 const LVR_WHATSAPP_MESSAGE = "Habari, nataka kuagiza bidhaa za LVR (Built Different) - t-shirt/cap.";
@@ -171,15 +200,21 @@ function getProductImages(p) {
 
 // TRACKING ANIMATION - inatafsiri "status" ya oda kuwa asilimia ya safari
 // (kwa ajili ya animation), na kuamua ikoni (✈️ ndege / 🚢 meli / 🚌 basi)
-// kwa kuangalia "origin" ya bidhaa zilizoagizwa (kwa kulinganisha majina
-// na orodha ya "products" iliyopakiwa tayari kwenye ukurasa huu).
+// kwa kuangalia "origin" ya bidhaa zilizoagizwa. Hatua zinajumuisha: Nchi ya
+// Asili -> Njia ya Usafiri -> Forodha/Import Duties DSM -> Mkoa la Mteja.
 const STATUS_PROGRESS = {
-  pending: 8,
-  inasindikwa: 30,
-  inasafirishwa: 65,
-  imefika_mkoani: 90,
+  pending: 5,
+  inasindikwa: 15,
+  imenunuliwa: 25,
+  inasafirishwa_nje: 45,
+  forodha_dsm: 60,
+  imefika_dsm: 70,
+  inasafirishwa_mkoani: 90,
   delivered: 100,
   cancelled: 0,
+  // Majina ya zamani (backward-compatible, kama oda za awali bado zinayo)
+  inasafirishwa: 55,
+  imefika_mkoani: 90,
 };
 
 function parseOrderItems(itemsRaw) {
@@ -208,9 +243,22 @@ function getOrderJourney(order, products) {
   const icon = isInternational ? (/china/i.test(origin) ? "🚢" : "✈️") : "🚌";
   const progress = STATUS_PROGRESS[order.status] ?? STATUS_PROGRESS.pending;
 
+  // Vituo (checkpoints) vinavyoonekana kwenye mstari wa safari
+  const checkpoints = isInternational
+    ? [
+        { label: origin, at: 0 },
+        { label: "Forodha DSM", at: 60 },
+        { label: order.region || "Mkoani", at: 100 },
+      ]
+    : [
+        { label: "Dar es Salaam", at: 0 },
+        { label: order.region || "Mkoani", at: 100 },
+      ];
+
   return {
     icon,
     progress,
+    checkpoints,
     fromLabel: isInternational ? origin : "Dar es Salaam",
     midLabel: isInternational ? "Dar es Salaam" : null,
     toLabel: order.region || "Mkoani",
@@ -242,6 +290,8 @@ export default function Home() {
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
   const [selectedType, setSelectedType] = useState("");
+  // Machaguo ya jina lolote (Watts, Battery, Units n.k) - { [label]: jina_lililochaguliwa }
+  const [selectedOptions, setSelectedOptions] = useState({});
   const [modalGalleryIdx, setModalGalleryIdx] = useState(0);
 
   const [routeIdx, setRouteIdx] = useState(0);
@@ -325,32 +375,41 @@ export default function Home() {
 
   useEffect(() => {
     const t = setInterval(() => {
-      setBillboardIdx((i) => (i + 1) % LVR_BILLBOARD_IMAGES.length);
+      setBillboardIdx((i) => (i + 1) % LVR_BILLBOARD_SLIDES.length);
     }, 4000);
     return () => clearInterval(t);
   }, []);
 
   const handleOpenProductModal = (product) => {
     setSelectedProduct(product);
-    const { sizes, colors, types } = getProductVariants(product);
+    const { sizes, colors, types, options } = getProductVariants(product);
     setSelectedSize(sizes[0]?.name || "");
     setSelectedColor(colors[0]?.name || "");
     setSelectedType(types[0]?.name || "");
+    const initialOptions = {};
+    Object.entries(options).forEach(([label, list]) => {
+      initialOptions[label] = list[0]?.name || "";
+    });
+    setSelectedOptions(initialOptions);
     setModalGalleryIdx(0);
     setJustAddedToCart(false);
   };
 
   const handleAddToCartWithOptions = () => {
     if (!selectedProduct) return;
-    const { sizes, colors, types } = getProductVariants(selectedProduct);
+    const { sizes, colors, types, options } = getProductVariants(selectedProduct);
     const sizeObj = sizes.find((s) => s.name === selectedSize);
     const colorObj = colors.find((c) => c.name === selectedColor);
     const typeObj = types.find((t) => t.name === selectedType);
-    // Bei ya mwisho: rangi > aina > size > bei ya kawaida ya bidhaa
-    const effectivePrice = colorObj?.price ?? typeObj?.price ?? sizeObj?.price ?? selectedProduct.price;
-    const effectiveImage = colorObj?.image || typeObj?.image || sizeObj?.image || null;
-    // Shipping fee ya mwisho: rangi > aina > size > shipping_fee ya kawaida ya bidhaa
-    const effectiveShippingFee = colorObj?.shipping_fee ?? typeObj?.shipping_fee ?? sizeObj?.shipping_fee ?? selectedProduct.shipping_fee;
+    // Machaguo ya jina lolote (Watts/Battery/Units n.k) yaliyochaguliwa
+    const selectedOptionObjs = Object.entries(options).map(([label, list]) =>
+      list.find((o) => o.name === selectedOptions[label])
+    );
+    // Bei ya mwisho: machaguo maalum (options) > rangi > aina > size > bei ya kawaida
+    const candidates = [...selectedOptionObjs, colorObj, typeObj, sizeObj];
+    const effectivePrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? selectedProduct.price;
+    const effectiveImage = candidates.find((c) => c?.image)?.image ?? null;
+    const effectiveShippingFee = candidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ?? selectedProduct.shipping_fee;
 
     const itemWithOptions = {
       ...selectedProduct,
@@ -360,6 +419,7 @@ export default function Home() {
       selectedSize,
       selectedColor,
       selectedType,
+      selectedOptions: { ...selectedOptions },
       variantImage: effectiveImage,
       qty: 1,
     };
@@ -433,6 +493,7 @@ export default function Home() {
         size: item.selectedSize || null,
         color: item.selectedColor || null,
         type: item.selectedType || null,
+        options: item.selectedOptions || null,
       }))
     );
 
@@ -481,6 +542,11 @@ export default function Home() {
       if (item.selectedSize) message += `   • Size: ${item.selectedSize}\n`;
       if (item.selectedColor) message += `   • Rangi: ${item.selectedColor}\n`;
       if (item.selectedType) message += `   • Aina/Uwezo: ${item.selectedType}\n`;
+      if (item.selectedOptions) {
+        Object.entries(item.selectedOptions).forEach(([label, val]) => {
+          if (val) message += `   • ${label}: ${val}\n`;
+        });
+      }
       message += `   • Idadi: ${itemQty} x ${fmtTZS(item.price)} = ${fmtTZS(itemTotal)}\n\n`;
     });
 
@@ -568,7 +634,7 @@ export default function Home() {
   const currentFursa = FURSA_ZA_ISHIKI[fursaIdx];
 
   const modalImages = selectedProduct ? getProductImages(selectedProduct) : [];
-  const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [] };
+  const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [], options: {} };
 
   return (
     <main className="bg-[#F7F3EA] min-h-screen relative text-[#12182B]">
@@ -760,45 +826,69 @@ export default function Home() {
       </section>
 
       {/* BILLBOARD - LVR (BUILT DIFFERENT) */}
-      <section className="relative w-full h-[420px] sm:h-[480px] overflow-hidden">
-        {LVR_BILLBOARD_IMAGES.map((img, i) => (
-          <img
-            key={i}
-            src={img}
-            alt="LVR Built Different"
-            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000"
-            style={{ opacity: i === billboardIdx ? 1 : 0 }}
-          />
-        ))}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/40"></div>
+      <section className="relative w-full h-[420px] sm:h-[480px] overflow-hidden bg-[#12182B]">
+        {LVR_BILLBOARD_SLIDES.map((slide, i) => {
+          const isActive = i === billboardIdx;
+          if (slide.type === "image") {
+            return (
+              <div key={i} className="absolute inset-0 transition-opacity duration-1000" style={{ opacity: isActive ? 1 : 0 }}>
+                <img src={slide.src} alt="LVR Built Different" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/20"></div>
+                <div className="absolute inset-0 flex flex-col items-center justify-end pb-8 sm:pb-10">
+                  <span className="text-white text-xl sm:text-2xl font-extrabold tracking-tight mb-4 drop-shadow-lg">LVR</span>
+                  <a
+                    href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(LVR_WHATSAPP_MESSAGE)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-white hover:bg-gray-100 text-[#12182B] px-6 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-xl transition-colors"
+                  >
+                    Order Now
+                  </a>
+                </div>
+              </div>
+            );
+          }
+          // TEXT SLIDE - background nzito, maneno makubwa yanayosomeka vizuri
+          return (
+            <div
+              key={i}
+              className="absolute inset-0 bg-[#12182B] flex flex-col items-center justify-center text-center px-6 transition-opacity duration-1000"
+              style={{ opacity: isActive ? 1 : 0 }}
+            >
+              <span className="text-white/70 text-[10px] font-bold uppercase tracking-[0.3em] mb-3">
+                Streetwear • Lifestyle
+              </span>
+              <h2 className="text-white text-3xl sm:text-5xl font-extrabold tracking-tight mb-1">LVR</h2>
+              <p className="text-white/60 text-xs sm:text-sm italic mb-5">built different</p>
 
-        <div className="absolute inset-0 flex flex-col items-center justify-end text-center px-5 pb-8 sm:pb-10">
-          <span className="text-white/70 text-[10px] font-bold uppercase tracking-[0.3em] mb-2">
-            Streetwear • Lifestyle
-          </span>
-          <h2 className="text-white text-2xl sm:text-4xl font-extrabold tracking-tight mb-1">LVR</h2>
-          <p className="text-white/80 text-xs sm:text-sm italic mb-3">built different</p>
-          <p className="text-white/90 text-xs sm:text-sm max-w-md leading-relaxed mb-1">
-            LVR is more than streetwear — it's a mindset.
-          </p>
-          <p className="text-white/70 text-[11px] sm:text-xs max-w-md leading-relaxed mb-4">
-            Every piece represents confidence, individuality, and the courage to build your own path.
-          </p>
-          <p className="text-[#E8A93B] text-sm sm:text-base font-extrabold tracking-widest mb-5">
-            KEEP MAKING. UNTIL WE WIN.
-          </p>
-          <a
-            href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(LVR_WHATSAPP_MESSAGE)}`}
-            target="_blank"
-            rel="noreferrer"
-            className="bg-white hover:bg-gray-100 text-[#12182B] px-6 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-xl transition-colors"
-          >
-            Order LVR
-          </a>
-        </div>
+              <p className="text-white text-sm sm:text-base max-w-md leading-relaxed mb-3 font-medium">
+                {slide.en}
+              </p>
+              <p className="text-[#E8A93B]/90 text-xs sm:text-sm max-w-md leading-relaxed mb-5 italic">
+                {slide.sw}
+              </p>
 
-        <div className="absolute top-4 right-4 flex gap-1.5">
-          {LVR_BILLBOARD_IMAGES.map((_, i) => (
+              <p className="text-white text-sm sm:text-lg font-extrabold tracking-widest mb-1">
+                {slide.slogan}
+              </p>
+              <p className="text-white/50 text-[10px] sm:text-xs tracking-wider mb-6">
+                {slide.sloganSw}
+              </p>
+
+              <a
+                href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(LVR_WHATSAPP_MESSAGE)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-white hover:bg-gray-100 text-[#12182B] px-6 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-xl transition-colors"
+              >
+                Order Now
+              </a>
+            </div>
+          );
+        })}
+
+        <div className="absolute top-4 right-4 flex gap-1.5 z-10">
+          {LVR_BILLBOARD_SLIDES.map((_, i) => (
             <span
               key={i}
               className={`h-1.5 rounded-full transition-all duration-500 ${i === billboardIdx ? "w-6 bg-white" : "w-1.5 bg-white/40"}`}
@@ -1017,8 +1107,12 @@ export default function Home() {
                   const sizeObj = modalVariants.sizes.find((s) => s.name === selectedSize);
                   const colorObj = modalVariants.colors.find((c) => c.name === selectedColor);
                   const typeObj = modalVariants.types.find((t) => t.name === selectedType);
-                  const variantImage = colorObj?.image || typeObj?.image || sizeObj?.image || null;
-                  const variantPrice = colorObj?.price ?? typeObj?.price ?? sizeObj?.price ?? null;
+                  const optionObjs = Object.entries(modalVariants.options).map(([label, list]) =>
+                    list.find((o) => o.name === selectedOptions[label])
+                  );
+                  const candidates = [...optionObjs, colorObj, typeObj, sizeObj];
+                  const variantImage = candidates.find((c) => c?.image)?.image ?? null;
+                  const variantPrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
                   const displayImage = variantImage || modalImages[modalGalleryIdx];
                   const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
 
@@ -1113,6 +1207,26 @@ export default function Home() {
                   </div>
                 )}
 
+                {/* MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity n.k) */}
+                {Object.entries(modalVariants.options).map(([label, list]) => (
+                  <div key={label} className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua {label}:</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {list.map((opt) => (
+                        <button
+                          key={opt.name}
+                          onClick={() => setSelectedOptions((prev) => ({ ...prev, [label]: opt.name }))}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${
+                            selectedOptions[label] === opt.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"
+                          }`}
+                        >
+                          {opt.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
                 <button
                   onClick={handleAddToCartWithOptions}
                   className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
@@ -1176,16 +1290,29 @@ export default function Home() {
                       {/* ANIMATION YA USAFIRI - inasogea kulingana na status */}
                       {!journey.isCancelled && (
                         <div className="mt-2 pt-2 border-t border-black/5">
-                          <div className="flex justify-between text-[9px] text-gray-500 font-semibold mb-2">
-                            <span>{journey.fromLabel}</span>
-                            {journey.midLabel && <span>{journey.midLabel}</span>}
-                            <span>{journey.toLabel}</span>
+                          <div className="flex justify-between text-[8px] text-gray-500 font-semibold mb-2">
+                            {journey.checkpoints.map((cp, i) => (
+                              <span key={i} className={journey.progress >= cp.at ? "text-[#17A398]" : ""}>
+                                {cp.label}
+                              </span>
+                            ))}
                           </div>
                           <div className="relative h-1.5 bg-gray-200 rounded-full overflow-visible">
                             <div
                               className="absolute left-0 top-0 h-full bg-[#17A398] rounded-full transition-all duration-1000 ease-out"
                               style={{ width: `${journey.progress}%` }}
                             ></div>
+                            {journey.checkpoints.map((cp, i) => (
+                              <div
+                                key={i}
+                                className="absolute top-1/2 w-2 h-2 rounded-full border-2 border-white"
+                                style={{
+                                  left: `${cp.at}%`,
+                                  transform: "translate(-50%, -50%)",
+                                  backgroundColor: journey.progress >= cp.at ? "#17A398" : "#D1D5DB",
+                                }}
+                              ></div>
+                            ))}
                             <div
                               className="absolute top-1/2 tracking-icon-move"
                               style={{ left: `${journey.progress}%`, transform: "translate(-50%, -50%)" }}
@@ -1271,6 +1398,10 @@ export default function Home() {
                               {item.selectedSize && <span>Size: {item.selectedSize}</span>}
                               {item.selectedColor && <span>Rangi: {item.selectedColor}</span>}
                               {item.selectedType && <span>Aina: {item.selectedType}</span>}
+                              {item.selectedOptions &&
+                                Object.entries(item.selectedOptions).map(([label, val]) =>
+                                  val ? <span key={label}>{label}: {val}</span> : null
+                                )}
                             </div>
                             <span className="font-bold text-[#17A398]">{fmtTZS(item.price)}</span>
                           </div>
