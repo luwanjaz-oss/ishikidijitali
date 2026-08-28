@@ -11,7 +11,11 @@ const ADMIN_PASSWORD = "ishiki2026";
 const STATUS_OPTIONS = [
   { value: "pending", label: "⏳ Pending (Mpya)" },
   { value: "inasindikwa", label: "🛒 Inasindikwa (Tunatafuta/Kununua)" },
-  { value: "inasafirishwa", label: "🚚 Inasafirishwa" },
+  { value: "imenunuliwa", label: "🧾 Imenunuliwa Nje (Inasubiri Kusafirishwa)" },
+  { value: "inasafirishwa_nje", label: "✈️ Inasafirishwa Kutoka Nje (Ndege/Meli)" },
+  { value: "forodha_dsm", label: "🛃 Forodha DSM (Import Duties)" },
+  { value: "imefika_dsm", label: "📦 Imefika Dar es Salaam" },
+  { value: "inasafirishwa_mkoani", label: "🚚 Inasafirishwa Kwenda Mkoani" },
   { value: "imefika_mkoani", label: "📍 Imefika Mkoani" },
   { value: "delivered", label: "✅ Imekamilika (Delivered)" },
   { value: "cancelled", label: "❌ Imeghairiwa" },

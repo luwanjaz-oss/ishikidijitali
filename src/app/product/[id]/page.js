@@ -44,19 +44,28 @@ function normalizeVariantList(arr) {
 }
 
 function getProductVariants(p) {
-  if (!p?.variants) return { sizes: [], colors: [], types: [] };
+  if (!p?.variants) return { sizes: [], colors: [], types: [], options: {} };
   let v = p.variants;
   if (typeof v === "string") {
     try {
       v = JSON.parse(v);
     } catch {
-      return { sizes: [], colors: [], types: [] };
+      return { sizes: [], colors: [], types: [], options: {} };
     }
+  }
+  // "options" ni MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity n.k)
+  const options = {};
+  if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
+    Object.entries(v.options).forEach(([label, arr]) => {
+      const list = normalizeVariantList(arr);
+      if (list.length > 0) options[label] = list;
+    });
   }
   return {
     sizes: normalizeVariantList(v.sizes),
     colors: normalizeVariantList(v.colors),
     types: normalizeVariantList(v.types),
+    options,
   };
 }
 
@@ -89,6 +98,7 @@ export default function ProductDetailPage() {
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
   const [selectedType, setSelectedType] = useState("");
+  const [selectedOptions, setSelectedOptions] = useState({});
   const [optionError, setOptionError] = useState("");
 
   const [reviews, setReviews] = useState([]);
@@ -106,10 +116,15 @@ export default function ProductDetailPage() {
         .single();
       if (!error) {
         setProduct(data);
-        const { sizes, colors, types } = getProductVariants(data);
+        const { sizes, colors, types, options } = getProductVariants(data);
         if (sizes.length) setSelectedSize(sizes[0].name);
         if (colors.length) setSelectedColor(colors[0].name);
         if (types.length) setSelectedType(types[0].name);
+        const initialOptions = {};
+        Object.entries(options).forEach(([label, list]) => {
+          initialOptions[label] = list[0]?.name || "";
+        });
+        setSelectedOptions(initialOptions);
       }
       setLoading(false);
     }
@@ -155,14 +170,19 @@ export default function ProductDetailPage() {
   const requiresSize = variants.sizes.length > 0;
   const requiresColor = variants.colors.length > 0;
   const requiresType = variants.types.length > 0;
+  const optionLabels = Object.keys(variants.options);
 
   const selectedSizeObj = variants.sizes.find((s) => s.name === selectedSize);
   const selectedColorObj = variants.colors.find((c) => c.name === selectedColor);
   const selectedTypeObj = variants.types.find((t) => t.name === selectedType);
-  // Bei ya mwisho: rangi > aina > size > bei ya kawaida ya bidhaa
-  const variantPrice = selectedColorObj?.price ?? selectedTypeObj?.price ?? selectedSizeObj?.price ?? null;
-  const variantImage = selectedColorObj?.image || selectedTypeObj?.image || selectedSizeObj?.image || null;
-  const variantShippingFee = selectedColorObj?.shipping_fee ?? selectedTypeObj?.shipping_fee ?? selectedSizeObj?.shipping_fee ?? null;
+  const selectedOptionObjs = optionLabels.map((label) =>
+    variants.options[label].find((o) => o.name === selectedOptions[label])
+  );
+  // Bei ya mwisho: machaguo maalum (options) > rangi > aina > size > bei ya kawaida
+  const variantCandidates = [...selectedOptionObjs, selectedColorObj, selectedTypeObj, selectedSizeObj];
+  const variantPrice = variantCandidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
+  const variantImage = variantCandidates.find((c) => c?.image)?.image ?? null;
+  const variantShippingFee = variantCandidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ?? null;
   const displayPrice = variantPrice !== null ? variantPrice : product?.price;
 
   function handleAdd() {
@@ -180,6 +200,12 @@ export default function ProductDetailPage() {
       setOptionError("Tafadhali chagua Aina/Uwezo kwanza kabla ya kuongeza kikapuni!");
       return;
     }
+    for (const label of optionLabels) {
+      if (!selectedOptions[label]) {
+        setOptionError(`Tafadhali chagua ${label} kwanza kabla ya kuongeza kikapuni!`);
+        return;
+      }
+    }
 
     setOptionError("");
     addToCart({
@@ -190,6 +216,7 @@ export default function ProductDetailPage() {
       selectedSize: selectedSize || undefined,
       selectedColor: selectedColor || undefined,
       selectedType: selectedType || undefined,
+      selectedOptions: { ...selectedOptions },
       variantImage: variantImage,
       qty: 1,
     });
@@ -398,6 +425,37 @@ export default function ProductDetailPage() {
                 </div>
               </div>
             )}
+
+            {optionLabels.map((label) => (
+              <div key={label} className="my-4 p-4 bg-white border border-gray-200 rounded-xl">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold text-gray-800 uppercase tracking-wider">
+                    Chagua {label}:
+                  </label>
+                  {selectedOptions[label] && (
+                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                      {selectedOptions[label]}
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {variants.options[label].map((opt) => (
+                    <button
+                      key={opt.name}
+                      type="button"
+                      onClick={() => { setSelectedOptions((prev) => ({ ...prev, [label]: opt.name })); setOptionError(""); }}
+                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
+                        selectedOptions[label] === opt.name
+                          ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
+                          : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
+                      }`}
+                    >
+                      {opt.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
 
             {optionError && (
               <p className="text-xs text-red-500 font-medium mb-3">⚠️ {optionError}</p>
