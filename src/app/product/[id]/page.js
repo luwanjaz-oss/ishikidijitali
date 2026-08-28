@@ -15,16 +15,6 @@ function getProductImages(p) {
 }
 
 // MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb)
-// - kolamu halisi kwenye Supabase. Kila kipengele kinaweza kuwa NENO TU, AU
-// OBJECT yenye picha na/au bei yake maalum, mfano:
-// {
-//   "colors": [
-//     {"name": "Green", "image": "https://...", "price": 12600},
-//     {"name": "Silver", "image": "https://...", "price": 13000},
-//     "Blue"
-//   ],
-//   "sizes": ["S", "M", "L"]
-// }
 function normalizeVariantList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -53,6 +43,17 @@ function getProductVariants(p) {
       return { sizes: [], colors: [], types: [], options: {} };
     }
   }
+
+  // KAMA VARIANTS NI ARRAY YA DIRECT KUTOKA SUPABASE (Mfano Power Stations):
+  if (Array.isArray(v)) {
+    return {
+      sizes: [],
+      colors: [],
+      types: [],
+      options: { "Uwezo / Option": normalizeVariantList(v) },
+    };
+  }
+
   // "options" ni MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity n.k)
   const options = {};
   if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
@@ -114,7 +115,7 @@ export default function ProductDetailPage() {
         .select("*")
         .eq("id", id)
         .single();
-      if (!error) {
+      if (!error && data) {
         setProduct(data);
         const { sizes, colors, types, options } = getProductVariants(data);
         if (sizes.length) setSelectedSize(sizes[0].name);
@@ -176,7 +177,7 @@ export default function ProductDetailPage() {
   const selectedColorObj = variants.colors.find((c) => c.name === selectedColor);
   const selectedTypeObj = variants.types.find((t) => t.name === selectedType);
   const selectedOptionObjs = optionLabels.map((label) =>
-    variants.options[label].find((o) => o.name === selectedOptions[label])
+    variants.options[label]?.find((o) => o.name === selectedOptions[label])
   );
   // Bei ya mwisho: machaguo maalum (options) > rangi > aina > size > bei ya kawaida
   const variantCandidates = [...selectedOptionObjs, selectedColorObj, selectedTypeObj, selectedSizeObj];
@@ -208,16 +209,27 @@ export default function ProductDetailPage() {
     }
 
     setOptionError("");
+
+    // Tengeneza jina linalotambulisha vizuri Variant iliyochaguliwa kwenye Cart
+    const activeVariantNames = [
+      selectedSize,
+      selectedColor,
+      selectedType,
+      ...Object.values(selectedOptions)
+    ].filter(Boolean).join(" - ");
+
     addToCart({
       ...product,
-      price: displayPrice,
+      id: activeVariantNames ? `${product.id}-${activeVariantNames}` : product.id,
+      name: activeVariantNames ? `${product.name} (${activeVariantNames})` : product.name,
+      price: displayPrice || product.price,
       basePrice: product.price,
       shipping_fee: variantShippingFee !== null ? variantShippingFee : product.shipping_fee,
       selectedSize: selectedSize || undefined,
       selectedColor: selectedColor || undefined,
       selectedType: selectedType || undefined,
       selectedOptions: { ...selectedOptions },
-      variantImage: variantImage,
+      variantImage: variantImage || (images.length > 0 ? images[0] : null),
       qty: 1,
     });
     setAdded(true);
