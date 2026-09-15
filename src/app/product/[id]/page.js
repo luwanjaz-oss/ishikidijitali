@@ -1,20 +1,46 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
-import { useCart } from "@/context/CartContext";
+import { supabase } from "../lib/supabaseClient";
+import { useCart } from "../context/CartContext";
+import { downloadReceipt } from "../lib/receipt";
 
-function fmtTZS(n) {
-  return (n || 0).toLocaleString("en-US") + " TZS";
+const WHATSAPP_NUMBER = "255754282086";
+const LIPA_NAMBA = "58176639";
+const NBC_ACCOUNT = "106174003449";
+const ACCOUNT_NAME = "Zacharia Luwanja";
+
+// Kama bidhaa haina "commission" iliyowekwa Supabase, hii ndiyo default.
+const DEFAULT_COMMISSION_RATE = 0.20; // 20%
+
+// COMMISSION INASOMWA MOJA KWA MOJA KUTOKA "products.commission" (Supabase).
+// Jedwali la "affiliates" halina kolamu ya commission - kila msambazaji
+// anapata commission kulingana na commission ya BIDHAA aliyouza, siyo
+// kiwango chake binafsi.
+function getProductCommissionRate(item) {
+  const raw = item.commission;
+  if (raw === null || raw === undefined || raw === "") {
+    return DEFAULT_COMMISSION_RATE;
+  }
+  const num = Number(raw);
+  if (Number.isNaN(num)) return DEFAULT_COMMISSION_RATE;
+  // Mfano: 20 kwenye DB inamaanisha 20% -> 0.20
+  return num > 1 ? num / 100 : num;
 }
 
-function getProductImages(p) {
-  if (!p?.image_url) return [];
-  return p.image_url.split(",").map((s) => s.trim()).filter(Boolean);
-}
-
-// MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb)
+// MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb).
+// Kila kipengele kinaweza kuwa NENO TU (mfano "Nyeusi"), AU OBJECT yenye
+// picha na/au bei yake maalum, mfano:
+// {
+//   "colors": [
+//     {"name": "Green", "image": "https://...", "price": 12600},
+//     {"name": "Silver", "image": "https://...", "price": 13000},
+//     "Blue"
+//   ],
+//   "sizes": ["S", "M", "L"],
+//   "types": ["220V", "Battery"]
+// }
+// "image" na "price" ni HIARI - ukiacha, itatumia picha/bei ya kawaida ya bidhaa.
 function normalizeVariantList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -43,18 +69,9 @@ function getProductVariants(p) {
       return { sizes: [], colors: [], types: [], options: {} };
     }
   }
-
-  // KAMA VARIANTS NI ARRAY YA DIRECT KUTOKA SUPABASE (Mfano Power Stations):
-  if (Array.isArray(v)) {
-    return {
-      sizes: [],
-      colors: [],
-      types: [],
-      options: { "Uwezo / Option": normalizeVariantList(v) },
-    };
-  }
-
-  // "options" ni MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity n.k)
+  // "options" ni MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity,
+  // n.k) - kwa bidhaa ambazo hazifai kwenye sizes/colors/types za kawaida.
+  // Muundo: { "Uwezo (Watts)": [{"name":"200W10Ah","price":79000}, ...] }
   const options = {};
   if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
     Object.entries(v.options).forEach(([label, arr]) => {
@@ -70,523 +87,1457 @@ function getProductVariants(p) {
   };
 }
 
-export default function ProductDetailPage() {
-  const params = useParams();
-  const id = params.id;
-  const { addToCart } = useCart();
+const MIKOA = [
+  "Dar es Salaam", "Arusha", "Mwanza", "Dodoma", "Mbeya",
+  "Morogoro", "Tanga", "Kilimanjaro (Moshi)", "Zanzibar",
+  "Kigoma", "Tabora", "Iringa", "Ruvuma (Songea)", "Sumbawanga",
+  "Mtwara", "Lindi", "Shinyanga", "Kagera (Bukoba)", "Mara (Musoma)"
+];
 
-  const [product, setProduct] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [activeImg, setActiveImg] = useState(0);
-  const [added, setAdded] = useState(false);
+const TRANSPORT_ROUTES = [
+  { flag: "🇨🇳", name: "China → Dar es Salaam", days: "Siku 7 - 14 (Air Cargo)", progress: "75%" },
+  { flag: "🇺🇸", name: "USA → Dar es Salaam", days: "Siku 10 - 14 (Express)", progress: "60%" },
+  { flag: "🇦🇪", name: "Dubai → Dar es Salaam", days: "Siku 5 - 7 (Direct Flight)", progress: "90%" },
+  { flag: "🚢", name: "China Meli → Tanzania", days: "Siku 25 - 35 (Heavy Cargo)", progress: "40%" },
+  { flag: "🚌", name: "Kariakoo → Mikoani Kote", days: "Siku 1 (Mabasi / Express)", progress: "98%" },
+];
 
-  // SWIPE - mteja anavuta picha kubadilisha, siyo kubofya thumbnail.
-  const swipeStartX = useRef(null);
-  function handleSwipeStart(e) {
-    swipeStartX.current = e.touches ? e.touches[0].clientX : e.clientX;
+// FURSA ZA ISHI KIDIJITALI - inaonyesha kwa mzunguko (animation) kwenye Hero
+const FURSA_ZA_ISHIKI = [
+  { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
+  { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
+  { icon: "🏠", title: "Pambeza Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
+  { icon: "📈", title: "Kuza Biashara", desc: "Ongeza bidhaa mpya, kuza biashara uliyonayo" },
+  { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
+];
+
+// BILLBOARD YA CHAPA - LVR (Built Different). "Slides" zinabadilika kwa
+// zamu - picha (na "Order Now" tu juu yake) na slide YA MANENO peke yake
+// (background nyeusi, maneno makubwa yanayosomeka vizuri, Kiingereza +
+// tafsiri ya Kiswahili). Hii inaepuka tatizo la maneno kupotea juu ya picha.
+// TAHADHARI: link za picha ni "signed URLs" zenye tarehe ya mwisho (~mwaka 1) -
+// baada ya hapo zitahitaji kusasishwa, au fanya bucket iwe Public kwa link za kudumu.
+const LVR_BILLBOARD_SLIDES = [
+  {
+    type: "image",
+    src: "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_48_50%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ4XzUwIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNDgsImV4cCI6MTgxOTM2NDA0OH0.mLJeqfr-EIlF2a5SCCts9emJrBVGzuRbigJcYqH7zTo",
+  },
+  {
+    type: "image",
+    src: "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_49_15%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzQ5XzE1IFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwNzksImV4cCI6MTgxOTM2NDA3OX0.EXl8fGupFEn1VijGdhwvUSw_02Vya2IM_U8eD-LblHA",
+  },
+  {
+    type: "text",
+    en: "LVR is more than streetwear — it's a mindset. Every piece represents confidence, individuality, and the courage to build your own path.",
+    sw: "LVR si mavazi ya kawaida tu — ni mtazamo wa maisha. Kila kipande kinawakilisha ujasiri, upekee, na ushupavu wa kujijengea njia yako mwenyewe.",
+    slogan: "KEEP MAKING. UNTIL WE WIN.",
+    sloganSw: "ENDELEA KUTENGENEZA. MPAKA TUSHINDE.",
+  },
+  {
+    type: "image",
+    src: "https://fdqnykkjcuchmwtawgwa.supabase.co/storage/v1/object/sign/RVL/ChatGPT%20Image%20Aug%2027,%202026,%2001_53_03%20PM.png?token=eyJraWQiOiI3MjhhY2FhNS0zYzJiLTQ2M2MtYWFiMi0xOGFmMmEyNTA0ZWQiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJSVkwvQ2hhdEdQVCBJbWFnZSBBdWcgMjcsIDIwMjYsIDAxXzUzXzAzIFBNLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3ODc4MjgwOTYsImV4cCI6MTgxOTM2NDA5Nn0.MW04Wzi1GwN1uZIYBAKA2deXBRvmSZHd2hB5BRdSVEo",
+  },
+];
+
+const LVR_WHATSAPP_MESSAGE = "Habari, nataka kuagiza bidhaa za LVR (Built Different) - t-shirt/cap.";
+
+const SOCIAL_LINKS = {
+  pinterest: "https://pin.it/PxxgDcZDk",
+  instagram: "https://www.instagram.com/ishikidijitali?igsi=MWhibWk5Nzg0ZDNtcg%3D%3D&utm_source=qr",
+  facebook: "https://www.facebook.com/share/1G4nPDXpyA/?mibextid=wwXIfr",
+  tiktok: "https://www.tiktok.com/@lifestlyeservices?_r=1&_t=ZS-9943ipbBtPI",
+  whatsapp: `https://wa.me/${WHATSAPP_NUMBER}`,
+};
+
+const CATEGORIES = [
+  { id: "wote", label: "Vyote" },
+  { id: "elektroniki", label: "Elektroniki" },
+  { id: "vitu_vyote", label: "Zana & Mashine" },
+  { id: "fashion", label: "Mavazi & Viatu" },
+];
+
+const SERVICE_CENTER_NUMBER = "0754282086";
+
+// MASWALI NA MAJIBU (FAQ) - inaonekana chini ya tovuti kabla ya footer
+const FAQ_ITEMS = [
+  {
+    q: "Ishi Kidijitali inafanya kazi vipi?",
+    a: "Tunakuletea bidhaa mbalimbali kutoka China, USA, Dubai na hapa Dar es Salaam. Ukishaagiza, sisi ndio tunashughulikia utafutaji, ununuzi, na usafirishaji mpaka mkoa unapoishi.",
+  },
+  {
+    q: "Ninanunuaje bidhaa?",
+    a: "Chagua bidhaa Duka Kuu, bonyeza '+ Ongeza' kuweka kikapuni (chagua size/rangi/aina kama zipo), kisha fungua kikapu chako, jaza taarifa zako, na bonyeza 'Tuma Oda Hii WhatsApp'. Timu yetu itakuthibitishia oda kupitia WhatsApp.",
+  },
+  {
+    q: "Malipo yanafanyikaje?",
+    a: `Unaweza kulipa kwa njia mbili: (1) Pay on Delivery - unalipa CASH baada ya mzigo kufika kwako, au (2) Kidogo kidogo - unaweza kutuma malipo ya awali (deposit) kupitia Lipa Namba/NBC, kisha ulipe salio mzigo ukifika. Wasiliana nasi WhatsApp ${SERVICE_CENTER_NUMBER} kupanga utaratibu unaokufaa.`,
+  },
+  {
+    q: "Mzigo wangu utasafirishwaje?",
+    a: "Njia ya usafiri (ndege, meli, au barabara) inategemea aina na uzito/ujazo wa mzigo wako. Mzigo mdogo/wa haraka mara nyingi hutumia ndege (air cargo), mzigo mkubwa/mzito hutumia meli (sea cargo) ambayo ni nafuu zaidi lakini inachukua muda mrefu. Tutakushauri njia bora zaidi kulingana na bidhaa uliyoagiza.",
+  },
+  {
+    q: "Naweza kufuatilia mzigo wangu vipi?",
+    a: "Bonyeza 'Fuatilia Mzigo 📦' kwenye menu, weka namba ya simu uliyotumia wakati wa oda, utaona hali ya oda yako papo hapo.",
+  },
+  {
+    q: "Nawezaje kuwa Msambazaji na kupata commission?",
+    a: "Bonyeza 'Jiunge Kama Msambazaji', jisajili kwa jina na namba ya simu, utapata link yako binafsi ya kusambaza. Mtu yeyote akinunua kupitia link yako, unapata commission moja kwa moja - kiwango hutofautiana kwa kila bidhaa.",
+  },
+  {
+    q: "Nawasiliana nanyi vipi kwa msaada zaidi?",
+    a: `Piga au WhatsApp Service Center yetu: ${SERVICE_CENTER_NUMBER}. Tuko tayari kukusaidia muda wowote kuhusu oda, malipo, au ufuatiliaji wa mzigo.`,
+  },
+];
+
+function fmtTZS(n) {
+  return (n || 0).toLocaleString("en-US") + " TZS";
+}
+
+function getProductImages(p) {
+  if (!p?.image_url) return [];
+  return p.image_url.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+// TRACKING ANIMATION - inatafsiri "status" ya oda kuwa asilimia ya safari
+// (kwa ajili ya animation), na kuamua ikoni (✈️ ndege / 🚢 meli / 🚌 basi)
+// kwa kuangalia "origin" ya bidhaa zilizoagizwa. Hatua zinajumuisha: Nchi ya
+// Asili -> Njia ya Usafiri -> Forodha/Import Duties DSM -> Mkoa la Mteja.
+const STATUS_PROGRESS = {
+  pending: 5,
+  inasindikwa: 15,
+  imenunuliwa: 25,
+  inasafirishwa_nje: 45,
+  forodha_dsm: 60,
+  imefika_dsm: 70,
+  inasafirishwa_mkoani: 90,
+  delivered: 100,
+  cancelled: 0,
+  // Majina ya zamani (backward-compatible, kama oda za awali bado zinayo)
+  inasafirishwa: 55,
+  imefika_mkoani: 90,
+};
+
+function parseOrderItems(itemsRaw) {
+  if (!itemsRaw) return [];
+  try {
+    const parsed = typeof itemsRaw === "string" ? JSON.parse(itemsRaw) : itemsRaw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-  function handleSwipeEnd(e, length) {
-    if (swipeStartX.current === null || length <= 1) return;
-    const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
-    const diff = endX - swipeStartX.current;
-    if (Math.abs(diff) > 35) {
-      if (diff < 0) setActiveImg((i) => (i + 1) % length);
-      else setActiveImg((i) => (i - 1 + length) % length);
+}
+
+function getOrderJourney(order, products) {
+  const items = parseOrderItems(order.items);
+  let origin = "Dar es Salaam";
+  let isInternational = false;
+
+  items.forEach((it) => {
+    const prod = products.find((p) => p.name === it.name);
+    if (prod?.origin && !/dar\s*es\s*salaam/i.test(prod.origin)) {
+      isInternational = true;
+      origin = prod.origin;
     }
-    swipeStartX.current = null;
-  }
+  });
+
+  const icon = isInternational ? (/china/i.test(origin) ? "🚢" : "✈️") : "🚌";
+  const progress = STATUS_PROGRESS[order.status] ?? STATUS_PROGRESS.pending;
+
+  // Vituo (checkpoints) vinavyoonekana kwenye mstari wa safari
+  const checkpoints = isInternational
+    ? [
+        { label: origin, at: 0 },
+        { label: "Forodha DSM", at: 60 },
+        { label: order.region || "Mkoani", at: 100 },
+      ]
+    : [
+        { label: "Dar es Salaam", at: 0 },
+        { label: order.region || "Mkoani", at: 100 },
+      ];
+
+  return {
+    icon,
+    progress,
+    checkpoints,
+    fromLabel: isInternational ? origin : "Dar es Salaam",
+    midLabel: isInternational ? "Dar es Salaam" : null,
+    toLabel: order.region || "Mkoani",
+    isCancelled: order.status === "cancelled",
+  };
+}
+
+export default function Home() {
+  const cartContext = useCart();
+  const cart = cartContext.cart || [];
+  const addToCart = cartContext.addToCart;
+  const removeFromCart = cartContext.removeFromCart;
+  const updateQty = cartContext.updateQty;
+  const clearCart = cartContext.clearCart;
+
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [showCartDrawer, setShowCartDrawer] = useState(false);
+  const [showTrackingModal, setShowTrackingModal] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [customerMkoa, setCustomerMkoa] = useState("Dar es Salaam");
+  const [customerAddress, setCustomerAddress] = useState("");
 
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
   const [selectedType, setSelectedType] = useState("");
+  // Machaguo ya jina lolote (Watts, Battery, Units n.k) - { [label]: jina_lililochaguliwa }
   const [selectedOptions, setSelectedOptions] = useState({});
-  const [optionError, setOptionError] = useState("");
+  const [modalGalleryIdx, setModalGalleryIdx] = useState(0);
 
-  const [reviews, setReviews] = useState([]);
-  const [reviewName, setReviewName] = useState("");
-  const [reviewRating, setReviewRating] = useState(5);
-  const [reviewComment, setReviewComment] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [routeIdx, setRouteIdx] = useState(0);
+  const [fursaIdx, setFursaIdx] = useState(0);
+  const [billboardIdx, setBillboardIdx] = useState(0);
+  const [category, setCategory] = useState("wote");
+  const [openFaqIdx, setOpenFaqIdx] = useState(0);
+
+  // JUST ADDED bidhaa kikapuni - inaonyesha chaguo "Endelea Kununua" au
+  // "Nenda Kikapuni" badala ya kufunga modal moja kwa moja (watu walikuwa
+  // wanachanganyikiwa wakidhani oda imekamilika).
+  const [justAddedToCart, setJustAddedToCart] = useState(false);
+
+  // SWIPE - kwa picha za bidhaa (modal na billboard) - mteja anavuta
+  // (swipe) kubadilisha picha, siyo kubofya thumbnail moja baada ya moja.
+  const swipeStartX = useRef(null);
+  function handleSwipeStart(e) {
+    swipeStartX.current = e.touches ? e.touches[0].clientX : e.clientX;
+  }
+  function handleSwipeEnd(e, length, idx, setIdx) {
+    if (swipeStartX.current === null || length <= 1) return;
+    const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const diff = endX - swipeStartX.current;
+    if (Math.abs(diff) > 35) {
+      if (diff < 0) setIdx((idx + 1) % length);
+      else setIdx((idx - 1 + length) % length);
+    }
+    swipeStartX.current = null;
+  }
+
+  // TRACKING - inatafuta oda halisi kwenye Supabase kwa namba ya simu
+  const [trackingInput, setTrackingInput] = useState("");
+  const [trackingResults, setTrackingResults] = useState(null);
+  const [trackingError, setTrackingError] = useState("");
+  const [trackingLoading, setTrackingLoading] = useState(false);
+
+  const [activeRefCode, setActiveRefCode] = useState("");
+
+  const [checkoutStatus, setCheckoutStatus] = useState("idle");
+  // Taarifa za oda ya mwisho - kwa ajili ya RISITI (receipt) inayopakuliwa.
+  const [lastOrder, setLastOrder] = useState(null);
 
   useEffect(() => {
-    async function loadProduct() {
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .eq("id", id)
-        .single();
-      if (!error && data) {
-        setProduct(data);
-        const { sizes, colors, types, options } = getProductVariants(data);
-        if (sizes.length) setSelectedSize(sizes[0].name);
-        if (colors.length) setSelectedColor(colors[0].name);
-        if (types.length) setSelectedType(types[0].name);
-        const initialOptions = {};
-        Object.entries(options).forEach(([label, list]) => {
-          initialOptions[label] = list[0]?.name || "";
-        });
-        setSelectedOptions(initialOptions);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get("ref") || localStorage.getItem("ishiki_ref_code");
+      if (ref) {
+        setActiveRefCode(ref);
+        localStorage.setItem("ishiki_ref_code", ref);
+      }
+      // Kutoka ukurasa wa bidhaa: "Nenda Kikapuni" inaongoza hapa na ?cart=1,
+      // hii inafungua drawer ya kikapu moja kwa moja.
+      if (params.get("cart") === "1") {
+        setShowCartDrawer(true);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    async function loadProducts() {
+      if (supabase) {
+        const { data } = await supabase.from("products").select("*").order("id", { ascending: true });
+        setProducts(data || []);
       }
       setLoading(false);
     }
-    loadProduct();
-  }, [id]);
+    loadProducts();
+  }, []);
 
   useEffect(() => {
-    async function loadReviews() {
-      const { data } = await supabase
-        .from("reviews")
-        .select("*")
-        .eq("product_id", id)
-        .order("created_at", { ascending: false });
-      if (data) setReviews(data);
-    }
-    loadReviews();
-  }, [id]);
+    const t = setInterval(() => {
+      setRouteIdx((i) => (i + 1) % TRANSPORT_ROUTES.length);
+    }, 3000);
+    return () => clearInterval(t);
+  }, []);
 
-  async function handleReviewSubmit(e) {
-    e.preventDefault();
-    if (!reviewName.trim() || !reviewComment.trim()) return;
-    setSubmitting(true);
-    const { data, error } = await supabase
-      .from("reviews")
-      .insert({
-        product_id: id,
-        customer_name: reviewName.trim(),
-        rating: reviewRating,
-        comment: reviewComment.trim(),
-      })
-      .select()
-      .single();
-    if (!error && data) {
-      setReviews((prev) => [data, ...prev]);
-      setReviewName("");
-      setReviewComment("");
-      setReviewRating(5);
-    }
-    setSubmitting(false);
-  }
+  useEffect(() => {
+    const t = setInterval(() => {
+      setFursaIdx((i) => (i + 1) % FURSA_ZA_ISHIKI.length);
+    }, 2800);
+    return () => clearInterval(t);
+  }, []);
 
-  const variants = getProductVariants(product);
-  const requiresSize = variants.sizes.length > 0;
-  const requiresColor = variants.colors.length > 0;
-  const requiresType = variants.types.length > 0;
-  const optionLabels = Object.keys(variants.options);
+  useEffect(() => {
+    const t = setInterval(() => {
+      setBillboardIdx((i) => (i + 1) % LVR_BILLBOARD_SLIDES.length);
+    }, 4000);
+    return () => clearInterval(t);
+  }, []);
 
-  const selectedSizeObj = variants.sizes.find((s) => s.name === selectedSize);
-  const selectedColorObj = variants.colors.find((c) => c.name === selectedColor);
-  const selectedTypeObj = variants.types.find((t) => t.name === selectedType);
-  const selectedOptionObjs = optionLabels.map((label) =>
-    variants.options[label]?.find((o) => o.name === selectedOptions[label])
-  );
-  // Bei ya mwisho: machaguo maalum (options) > rangi > aina > size > bei ya kawaida
-  const variantCandidates = [...selectedOptionObjs, selectedColorObj, selectedTypeObj, selectedSizeObj];
-  const variantPrice = variantCandidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
-  const variantImage = variantCandidates.find((c) => c?.image)?.image ?? null;
-  const variantShippingFee = variantCandidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ?? null;
-  const displayPrice = variantPrice !== null ? variantPrice : product?.price;
+  const handleOpenProductModal = (product) => {
+    setSelectedProduct(product);
+    const { sizes, colors, types, options } = getProductVariants(product);
+    setSelectedSize(sizes[0]?.name || "");
+    setSelectedColor(colors[0]?.name || "");
+    setSelectedType(types[0]?.name || "");
+    const initialOptions = {};
+    Object.entries(options).forEach(([label, list]) => {
+      initialOptions[label] = list[0]?.name || "";
+    });
+    setSelectedOptions(initialOptions);
+    setModalGalleryIdx(0);
+    setJustAddedToCart(false);
+  };
 
-  function handleAdd() {
-    if (!product) return;
+  const handleAddToCartWithOptions = () => {
+    if (!selectedProduct) return;
+    const { sizes, colors, types, options } = getProductVariants(selectedProduct);
+    const sizeObj = sizes.find((s) => s.name === selectedSize);
+    const colorObj = colors.find((c) => c.name === selectedColor);
+    const typeObj = types.find((t) => t.name === selectedType);
+    // Machaguo ya jina lolote (Watts/Battery/Units n.k) yaliyochaguliwa
+    const selectedOptionObjs = Object.entries(options).map(([label, list]) =>
+      list.find((o) => o.name === selectedOptions[label])
+    );
+    // Bei ya mwisho: machaguo maalum (options) > rangi > aina > size > bei ya kawaida
+    const candidates = [...selectedOptionObjs, colorObj, typeObj, sizeObj];
+    const effectivePrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? selectedProduct.price;
+    const effectiveImage = candidates.find((c) => c?.image)?.image ?? null;
+    const effectiveShippingFee = candidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ?? selectedProduct.shipping_fee;
 
-    if (requiresSize && !selectedSize) {
-      setOptionError("Tafadhali chagua Size kwanza kabla ya kuongeza kikapuni!");
-      return;
-    }
-    if (requiresColor && !selectedColor) {
-      setOptionError("Tafadhali chagua Rangi kwanza kabla ya kuongeza kikapuni!");
-      return;
-    }
-    if (requiresType && !selectedType) {
-      setOptionError("Tafadhali chagua Aina/Uwezo kwanza kabla ya kuongeza kikapuni!");
-      return;
-    }
-    for (const label of optionLabels) {
-      if (!selectedOptions[label]) {
-        setOptionError(`Tafadhali chagua ${label} kwanza kabla ya kuongeza kikapuni!`);
-        return;
-      }
-    }
-
-    setOptionError("");
-
-    // Tengeneza jina linalotambulisha vizuri Variant iliyochaguliwa kwenye Cart
-    const activeVariantNames = [
+    const itemWithOptions = {
+      ...selectedProduct,
+      price: effectivePrice,
+      basePrice: selectedProduct.price,
+      shipping_fee: effectiveShippingFee,
       selectedSize,
       selectedColor,
       selectedType,
-      ...Object.values(selectedOptions)
-    ].filter(Boolean).join(" - ");
-
-    addToCart({
-      ...product,
-      id: activeVariantNames ? `${product.id}-${activeVariantNames}` : product.id,
-      name: activeVariantNames ? `${product.name} (${activeVariantNames})` : product.name,
-      price: displayPrice || product.price,
-      basePrice: product.price,
-      shipping_fee: variantShippingFee !== null ? variantShippingFee : product.shipping_fee,
-      selectedSize: selectedSize || undefined,
-      selectedColor: selectedColor || undefined,
-      selectedType: selectedType || undefined,
       selectedOptions: { ...selectedOptions },
-      variantImage: variantImage || (images.length > 0 ? images[0] : null),
+      variantImage: effectiveImage,
       qty: 1,
+    };
+    if (addToCart) addToCart(itemWithOptions);
+    // Badala ya kufunga modal moja kwa moja, mwoneshe mteja chaguo:
+    // "Endelea Kununua" au "Nenda Kikapuni" - watu walikuwa wanachanganyikiwa.
+    setJustAddedToCart(true);
+  };
+
+  const handleContinueShopping = () => {
+    setSelectedProduct(null);
+    setJustAddedToCart(false);
+  };
+
+  const handleGoToCartFromModal = () => {
+    setSelectedProduct(null);
+    setJustAddedToCart(false);
+    setCheckoutStatus("idle");
+    setShowCartDrawer(true);
+  };
+
+  const handleQtyChange = (identifier, change) => {
+    const currentItem = cart.find(
+      (i) => (i.cartItemId || i.id) === identifier
+    );
+    if (!currentItem) return;
+
+    const newQty = (currentItem.qty || 1) + change;
+
+    if (updateQty) {
+      updateQty(identifier, newQty);
+    } else if (newQty <= 0 && removeFromCart) {
+      removeFromCart(identifier);
+    }
+  };
+
+  const handleWhatsAppCheckout = async (e) => {
+    e.preventDefault();
+    if (cart.length === 0 || checkoutStatus === "submitting") return;
+
+    setCheckoutStatus("submitting");
+
+    // SUBTOTAL - jumla ya bei za bidhaa peke yake (bila usafiri)
+    let subtotal = 0;
+    let totalCommission = 0;
+    cart.forEach((item) => {
+      const lineTotal = (item.price || 0) * (item.qty || 1);
+      subtotal += lineTotal;
+      if (activeRefCode) {
+        totalCommission += lineTotal * getProductCommissionRate(item);
+      }
     });
-    setAdded(true);
-  }
 
-  if (loading) {
-    return (
-      <main className="max-w-4xl mx-auto px-5 py-16">
-        <p className="text-[#6B7280] text-sm">Inapakia...</p>
-      </main>
+    // SHIPPING FEE - kwa sasa ni jumla rahisi ya shipping_fee x idadi ya kila
+    // bidhaa. TAHADHARI: hii bado HAIZINGATII CBM (meli) wala tofauti ya
+    // uzito kwa ndege - itahitaji muundo zaidi baadaye (bado tunajadiliana).
+    let shippingFee = 0;
+    cart.forEach((item) => {
+      const perUnitShipping = Number(item.shipping_fee) || 0;
+      shippingFee += perUnitShipping * (item.qty || 1);
+    });
+
+    const total = subtotal + shippingFee;
+
+    // ITEMS - orodha ya bidhaa (JSON text) inayohifadhiwa kwenye kolamu "items"
+    const itemsSummary = JSON.stringify(
+      cart.map((item) => ({
+        name: item.name,
+        qty: item.qty || 1,
+        price: item.price,
+        size: item.selectedSize || null,
+        color: item.selectedColor || null,
+        type: item.selectedType || null,
+        options: item.selectedOptions || null,
+      }))
     );
-  }
 
-  if (!product) {
-    return (
-      <main className="max-w-4xl mx-auto px-5 py-16">
-        <p className="text-[#6B7280] text-sm">Bidhaa haikupatikana.</p>
-        <Link href="/" className="text-[#17A398] text-sm font-semibold">
-          ← Rudi Dukani
-        </Link>
-      </main>
-    );
-  }
+    let orderInsertError = null;
+    let insertedOrder = null;
+    try {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("orders")
+          .insert([
+            {
+              customer_name: customerName,
+              customer_phone: customerPhone,
+              region: `${customerMkoa}${customerAddress ? " - " + customerAddress : ""}`,
+              items: itemsSummary,
+              subtotal: subtotal,
+              shipping_fee: shippingFee,
+              total: total,
+              ref_code: activeRefCode || null,
+              commission_total: activeRefCode ? Math.round(totalCommission) : 0,
+              status: "pending",
+            }
+          ])
+          .select()
+          .single();
+        if (error) orderInsertError = error;
+        insertedOrder = data;
+      }
+    } catch (err) {
+      orderInsertError = err;
+    }
 
-  const images = getProductImages(product);
-  const avgRating = reviews.length
-    ? (reviews.reduce((s, r) => s + r.rating, 0) / reviews.length).toFixed(1)
-    : null;
+    if (orderInsertError) {
+      console.error("Supabase order error:", orderInsertError);
+      // Tunamwonya mtumiaji badala ya kuficha kimya kimya - hii inasaidia
+      // kubaini haraka ikiwa jina la kolamu halifanani na Supabase.
+      alert("Kuna tatizo la kuhifadhi oda Supabase (ingawa WhatsApp itafunguka). Tafadhali mwambie msimamizi: " + (orderInsertError.message || "unknown error"));
+    }
+
+    // Hifadhi maelezo ya oda hii kwa ajili ya RISITI inayopakuliwa baadaye.
+    setLastOrder({
+      id: insertedOrder?.id || null,
+      date: insertedOrder?.created_at || new Date().toISOString(),
+      customerName,
+      customerPhone,
+      customerMkoa,
+      customerAddress,
+      items: cart.map((item) => ({
+        name: item.name,
+        qty: item.qty || 1,
+        price: item.price,
+        selectedSize: item.selectedSize || null,
+        selectedColor: item.selectedColor || null,
+        selectedType: item.selectedType || null,
+        selectedOptions: item.selectedOptions || null,
+      })),
+      subtotal,
+      shippingFee,
+      total,
+    });
+
+    let message = "📦 *ODA MPYA KUTOKA WEBSITE (ISHI KIDIJITALI)*\n\n";
+    message += `👤 *Mteja:* ${customerName || "Bila Jina"}\n`;
+    message += `📞 *Simu:* ${customerPhone || "Haijawekwa"}\n`;
+    message += `📍 *Mkoa:* ${customerMkoa}\n`;
+    message += `🏠 *Eneo/Mtaa:* ${customerAddress || "Haikutajwa"}\n`;
+    if (activeRefCode) message += `🔗 *Msambazaji Ref:* ${activeRefCode}\n`;
+    message += "\n📋 *ORODHA YA BIDHAA:*\n";
+
+    cart.forEach((item, index) => {
+      const itemQty = item.qty || 1;
+      const itemTotal = item.price * itemQty;
+      message += `${index + 1}. *${item.name}*\n`;
+      if (item.selectedSize) message += `   • Size: ${item.selectedSize}\n`;
+      if (item.selectedColor) message += `   • Rangi: ${item.selectedColor}\n`;
+      if (item.selectedType) message += `   • Aina/Uwezo: ${item.selectedType}\n`;
+      if (item.selectedOptions) {
+        Object.entries(item.selectedOptions).forEach(([label, val]) => {
+          if (val) message += `   • ${label}: ${val}\n`;
+        });
+      }
+      message += `   • Idadi: ${itemQty} x ${fmtTZS(item.price)} = ${fmtTZS(itemTotal)}\n\n`;
+    });
+
+    message += `💰 *Bei ya Bidhaa:* ${fmtTZS(subtotal)}\n`;
+    if (shippingFee > 0) message += `🚚 *Gharama ya Usafiri:* ${fmtTZS(shippingFee)}\n`;
+    message += `💵 *JUMLA KUU:* ${fmtTZS(total)}\n\n`;
+    message += "Tafadhali nithibitishie oda hii na kunipatia maelekezo ya kumalizia!";
+
+    window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`, "_blank");
+
+    if (clearCart) clearCart();
+    setCheckoutStatus("success");
+  };
+
+  const closeCheckoutSuccess = () => {
+    setShowCartDrawer(false);
+    setCheckoutStatus("idle");
+    setCustomerName("");
+    setCustomerPhone("");
+    setCustomerAddress("");
+  };
+
+  // TRACKING - Inatafuta oda za kweli kwenye Supabase kwa namba ya simu
+  // (au ID ya oda kama mteja anaifahamu).
+  const handleTrackOrder = async (e) => {
+    e.preventDefault();
+    const query = trackingInput.trim();
+    if (!query) return;
+
+    setTrackingLoading(true);
+    setTrackingError("");
+    setTrackingResults(null);
+
+    try {
+      let data = null;
+      let error = null;
+
+      if (/^\d+$/.test(query) && query.length <= 6) {
+        const res = await supabase.from("orders").select("*").eq("id", query);
+        data = res.data;
+        error = res.error;
+      }
+
+      if (!data || data.length === 0) {
+        const cleanPhone = query.replace(/\s+/g, "");
+        const res = await supabase
+          .from("orders")
+          .select("*")
+          .ilike("customer_phone", `%${cleanPhone}%`)
+          .order("created_at", { ascending: false });
+        data = res.data;
+        error = res.error;
+      }
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        setTrackingError("Hatujapata oda yoyote yenye namba hiyo. Hakikisha umeandika namba ya simu uliyotumia wakati wa oda.");
+      } else {
+        setTrackingResults(data);
+      }
+    } catch (err) {
+      console.error("Tracking error:", err);
+      setTrackingError("Imeshindwa kutafuta oda. Tafadhali jaribu tena au wasiliana nasi WhatsApp.");
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+
+  const closeTrackingModal = () => {
+    setShowTrackingModal(false);
+    setTrackingInput("");
+    setTrackingResults(null);
+    setTrackingError("");
+  };
+
+  const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
+  const cartTotal = cart ? cart.reduce((s, i) => s + i.price * (i.qty || 1), 0) : 0;
+  const filteredProducts = products.filter((p) => {
+    if (category === "wote") return true;
+    const pc = (p.category || "").toString().trim().toLowerCase();
+    return pc === category.toLowerCase();
+  });
+  const currentRoute = TRANSPORT_ROUTES[routeIdx];
+  const currentFursa = FURSA_ZA_ISHIKI[fursaIdx];
+
+  const modalImages = selectedProduct ? getProductImages(selectedProduct) : [];
+  const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [], options: {} };
 
   return (
-    <main className="bg-[#F7F3EA] min-h-screen">
-      <header className="sticky top-0 z-50 bg-[#12182B] border-b border-white/10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-5 py-3 flex items-center justify-between gap-4">
+    <main className="bg-[#F7F3EA] min-h-screen relative text-[#12182B]">
+      {/* NAVBAR */}
+      <header className="sticky top-0 z-40 bg-[#12182B] text-white shadow-md">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <span className="bg-[#E5383B] text-black font-bold text-sm px-2 py-1 rounded">
-              Ishi
-            </span>
-            <span className="text-lg font-bold text-white">Kidijitali</span>
+            <span className="bg-[#E5383B] text-black font-extrabold text-sm px-2 py-0.5 rounded">Ishi</span>
+            <div className="flex flex-col leading-none">
+              <span className="text-base font-bold tracking-tight">Kidijitali</span>
+              <span className="text-[8px] text-white/50 tracking-widest uppercase">Lifestyle Service</span>
+            </div>
           </Link>
-          <Link href="/" className="text-white/70 hover:text-white text-xs sm:text-sm">
-            ← Rudi Dukani
-          </Link>
+
+          <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-white/80">
+            <Link href="#duka" className="hover:text-white transition-colors">Duka</Link>
+            <a href="#kuhusu" className="hover:text-white transition-colors">Kuhusu Sisi</a>
+            <button onClick={() => setShowTrackingModal(true)} className="hover:text-white transition-colors">Fuatilia Mzigo 📦</button>
+            <a href="#uwekezaji" className="hover:text-white transition-colors">Wekeza / Lipa Namba 💰</a>
+            <a href="#maswali" className="hover:text-white transition-colors">Maswali 💬</a>
+            <Link href="/wasambazaji" className="hover:text-[#17A398] text-[#E8A93B] font-bold transition-colors">Wasambazaji 🤝</Link>
+          </nav>
+
+          <div className="flex items-center gap-2">
+            <button onClick={() => { setCheckoutStatus("idle"); setShowCartDrawer(true); }} className="bg-[#17A398] hover:bg-[#13847b] text-white px-4 py-1.5 rounded-full text-xs font-bold transition-all shadow flex items-center gap-2">
+              <span>🛒 Kikapu</span>
+              <span className="bg-white text-[#12182B] px-2 py-0.2 rounded-full text-[10px] font-extrabold">{cartCount}</span>
+            </button>
+            <button
+              onClick={() => setShowMobileMenu((v) => !v)}
+              className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 text-white"
+              aria-label="Menu"
+            >
+              {showMobileMenu ? "✕" : "☰"}
+            </button>
+          </div>
         </div>
+
+        {showMobileMenu && (
+          <div className="md:hidden bg-[#12182B] border-t border-white/10 px-4 py-3 flex flex-col gap-3 text-xs font-semibold text-white/80">
+            <a href="#duka" onClick={() => setShowMobileMenu(false)} className="py-1">Duka</a>
+            <a href="#kuhusu" onClick={() => setShowMobileMenu(false)} className="py-1">Kuhusu Sisi</a>
+            <button
+              onClick={() => { setShowTrackingModal(true); setShowMobileMenu(false); }}
+              className="py-1 text-left"
+            >
+              Fuatilia Mzigo 📦
+            </button>
+            <a href="#uwekezaji" onClick={() => setShowMobileMenu(false)} className="py-1">Wekeza / Lipa Namba 💰</a>
+            <a href="#maswali" onClick={() => setShowMobileMenu(false)} className="py-1">Maswali 💬</a>
+            <Link href="/wasambazaji" onClick={() => setShowMobileMenu(false)} className="py-1 text-[#E8A93B] font-bold">
+              Wasambazaji 🤝
+            </Link>
+          </div>
+        )}
       </header>
 
-      <section className="max-w-5xl mx-auto px-4 sm:px-5 py-6 sm:py-10">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-10">
-          {/* GALLERY - MOBILE FRIENDLY, PICHA ZAIDI YA 5 ZINAWEZEKANA - KUVUTA (SWIPE) */}
+      {/* HERO SECTION */}
+      <section className="bg-[#12182B] text-white px-4 py-10 sm:py-14 border-b border-white/10">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
           <div>
-            <div
-              className="w-full h-64 sm:h-96 bg-white rounded-2xl border border-[#E4DFD2] flex items-center justify-center overflow-hidden select-none touch-pan-y"
-              onTouchStart={handleSwipeStart}
-              onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, images.length)}
-            >
-              {variantImage ? (
-                <img src={variantImage} alt={product.name} className="h-full w-full object-contain pointer-events-none" draggable={false} />
-              ) : images[activeImg] ? (
-                <img src={images[activeImg]} alt={product.name} className="h-full w-full object-contain pointer-events-none" draggable={false} />
-              ) : (
-                <span className="text-6xl">{product.emoji || "📦"}</span>
-              )}
+            <span className="inline-block bg-[#E8A93B]/20 text-[#E8A93B] text-xs font-bold px-3 py-1 rounded-full mb-3 border border-[#E8A93B]/30">
+              ⚡ HUDUMA YA HARAKA & YA UHAKIKA
+            </span>
+            <h1 className="text-2xl sm:text-4xl font-extrabold leading-tight mb-4">
+              Niagize Vitu Vyovyote Kutoka Dar es Salaam, China, USA na Dubai.
+            </h1>
+            <p className="text-white/70 text-xs sm:text-sm mb-6 max-w-md">
+              Tafuta bidhaa au mashine yoyote - tunakununulia kutoka sokoni Kariakoo au Nje ya Nchi na kukuletea mkoani kwako kwa usalama.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <a href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nataka kuagiza bidhaa/kifaa.")}`} target="_blank" rel="noreferrer" className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg">
+                Agiza Kitu WhatsApp
+              </a>
+              <Link href="/wasambazaji" className="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl font-semibold text-xs border border-white/20 transition-colors">
+                Jiunge Kama Msambazaji
+              </Link>
             </div>
-            {!variantImage && images.length > 1 && (
-              <div className="flex justify-center gap-1.5 mt-3">
-                {images.map((_, i) => (
+
+            {/* FURSA ZA ISHI KIDIJITALI - INAZUNGUKA (ANIMATION) */}
+            <div className="mt-6 bg-white/5 border border-white/10 rounded-2xl p-4 max-w-sm overflow-hidden">
+              <span className="text-[10px] font-bold text-[#E8A93B] uppercase tracking-wider">
+                Fursa Zilizopo Ishi Kidijitali
+              </span>
+              <div key={fursaIdx} className="mt-2 flex items-center gap-3 fursa-fade">
+                <span className="text-3xl shrink-0">{currentFursa.icon}</span>
+                <div>
+                  <p className="text-sm font-bold text-white leading-tight">{currentFursa.title}</p>
+                  <p className="text-[11px] text-white/60 leading-snug">{currentFursa.desc}</p>
+                </div>
+              </div>
+              <div className="flex gap-1.5 mt-3">
+                {FURSA_ZA_ISHIKI.map((_, i) => (
                   <span
                     key={i}
-                    className={`h-1.5 rounded-full transition-all ${i === activeImg ? "w-5 bg-[#17A398]" : "w-1.5 bg-gray-300"}`}
+                    className={`h-1 rounded-full transition-all duration-500 ${
+                      i === fursaIdx ? "w-6 bg-[#E8A93B]" : "w-1.5 bg-white/20"
+                    }`}
                   ></span>
                 ))}
               </div>
-            )}
+            </div>
+            <style jsx>{`
+              @keyframes fursaFadeIn {
+                from { opacity: 0; transform: translateY(6px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              .fursa-fade {
+                animation: fursaFadeIn 0.5s ease-out;
+              }
+            `}</style>
           </div>
 
-          <div>
-            {product.origin && (
-              <span className="inline-block bg-[#17A398]/10 text-[#0B5852] text-[10px] font-extrabold uppercase px-3 py-1 rounded-full">
-                {product.origin}
+          <div className="bg-gradient-to-br from-[#1D2440] to-[#17A398]/20 border border-white/10 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-xs font-bold text-[#E8A93B] uppercase tracking-wider flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                Live Usafirishaji & Logistics
               </span>
-            )}
-            <h1 className="text-xl sm:text-2xl font-bold mt-3 mb-2">{product.name}</h1>
-            <div className="text-xl sm:text-2xl font-bold text-[#12182B] mb-3 font-mono flex items-center gap-2">
-              {fmtTZS(displayPrice)}
-              {variantPrice !== null && variantPrice !== product.price && (
-                <span className="text-sm text-gray-400 font-normal line-through">{fmtTZS(product.price)}</span>
-              )}
+              <span className="text-[10px] bg-white/10 px-2 py-0.5 rounded text-white/70">Real-time Updates</span>
             </div>
 
-            {product.quality_rating != null && (
-              <div className="mb-4">
-                <div className="flex justify-between text-xs text-[#6B7280] mb-1">
-                  <span>Ubora uliothibitishwa na muuzaji</span>
-                  <span className="font-semibold text-[#12182B]">
-                    {product.quality_rating}%
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#17A398]"
-                    style={{ width: `${product.quality_rating}%` }}
-                  ></div>
-                </div>
-              </div>
-            )}
-
-            {product.description && (
-              <p className="text-sm text-[#6B7280] leading-relaxed mb-4">
-                {product.description}
-              </p>
-            )}
-
-            {/* MACHAGUO YA BIDHAA - KUTOKA "variants" JSON - INADILI BIDHAA ZOTE */}
-            {requiresSize && (
-              <div className="my-4 p-4 bg-white border border-gray-200 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-                    Chagua Size:
-                  </label>
-                  {selectedSize && (
-                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
-                      {selectedSize}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {variants.sizes.map((sz) => (
-                    <button
-                      key={sz.name}
-                      type="button"
-                      onClick={() => { setSelectedSize(sz.name); setOptionError(""); }}
-                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
-                        selectedSize === sz.name
-                          ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      {sz.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {requiresColor && (
-              <div className="my-4 p-4 bg-white border border-gray-200 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-                    Chagua Rangi:
-                  </label>
-                  {selectedColor && (
-                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
-                      {selectedColor}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {variants.colors.map((clr) => (
-                    <button
-                      key={clr.name}
-                      type="button"
-                      onClick={() => { setSelectedColor(clr.name); setOptionError(""); }}
-                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition flex items-center gap-1.5 ${
-                        selectedColor === clr.name
-                          ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      {clr.image && (
-                        <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
-                      )}
-                      {clr.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {requiresType && (
-              <div className="my-4 p-4 bg-white border border-gray-200 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-                    Chagua Aina / Uwezo (mfano Watts, Voltage, 220V/Battery):
-                  </label>
-                  {selectedType && (
-                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
-                      {selectedType}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {variants.types.map((tp) => (
-                    <button
-                      key={tp.name}
-                      type="button"
-                      onClick={() => { setSelectedType(tp.name); setOptionError(""); }}
-                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
-                        selectedType === tp.name
-                          ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      {tp.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {optionLabels.map((label) => (
-              <div key={label} className="my-4 p-4 bg-white border border-gray-200 rounded-xl">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-                    Chagua {label}:
-                  </label>
-                  {selectedOptions[label] && (
-                    <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
-                      {selectedOptions[label]}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {variants.options[label].map((opt) => (
-                    <button
-                      key={opt.name}
-                      type="button"
-                      onClick={() => { setSelectedOptions((prev) => ({ ...prev, [label]: opt.name })); setOptionError(""); }}
-                      className={`px-3 py-2 text-xs font-bold rounded-lg border transition ${
-                        selectedOptions[label] === opt.name
-                          ? "bg-[#12182B] text-white border-[#12182B] shadow-sm"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-gray-400"
-                      }`}
-                    >
-                      {opt.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {optionError && (
-              <p className="text-xs text-red-500 font-medium mb-3">⚠️ {optionError}</p>
-            )}
-
-            <div className="flex flex-col gap-2 text-sm mb-5">
-              <div className="flex justify-between border-b border-[#E4DFD2] pb-2">
-                <span className="text-[#6B7280]">Zilizopo (Quantity)</span>
-                <span className="font-semibold">
-                  {product.quantity != null ? product.quantity : "Wasiliana nasi"}
+            <div className="bg-white/5 p-4 rounded-xl border border-white/10 transition-all duration-500">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-2xl">{currentRoute.flag}</span>
+                <span className="text-xs font-bold text-[#17A398] bg-[#17A398]/10 px-2.5 py-1 rounded-full border border-[#17A398]/30">
+                  {currentRoute.days}
                 </span>
               </div>
-              {product.warranty_info && (
-                <div className="flex justify-between border-b border-[#E4DFD2] pb-2 gap-3">
-                  <span className="text-[#6B7280] shrink-0">Dhamana (Warranty)</span>
-                  <span className="font-semibold text-right">{product.warranty_info}</span>
-                </div>
-              )}
-              {product.commission != null && (
-                <div className="flex justify-between border-b border-[#E4DFD2] pb-2">
-                  <span className="text-[#6B7280]">Commission ukishea</span>
-                  <span className="font-semibold text-[#0B5852]">{product.commission}%</span>
-                </div>
-              )}
-              {product.shipping_fee != null && Number(product.shipping_fee) > 0 && (
-                <div className="flex justify-between border-b border-[#E4DFD2] pb-2">
-                  <span className="text-[#6B7280]">Gharama ya Usafirishaji</span>
-                  <span className="font-semibold">{fmtTZS(product.shipping_fee)}</span>
-                </div>
-              )}
+              <h4 className="text-sm font-bold text-white mb-1">{currentRoute.name}</h4>
+              <p className="text-[11px] text-white/60 mb-3">Mizigo inakaguliwa na kusafirishwa kila siku kwenda mikoa yote.</p>
+
+              <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden">
+                <div
+                  className="bg-[#17A398] h-full transition-all duration-1000 ease-out"
+                  style={{ width: currentRoute.progress }}
+                ></div>
+              </div>
             </div>
 
-            {!added ? (
-              <button
-                onClick={handleAdd}
-                className="w-full bg-[#12182B] hover:bg-black text-white py-3.5 rounded-lg font-semibold text-sm transition"
-              >
-                Ongeza kikapuni
-              </button>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-center text-xs font-bold text-green-600 mb-1">✅ Imeongezwa Kikapuni!</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Link
-                    href="/"
-                    className="w-full bg-white border-2 border-[#12182B] text-[#12182B] py-3 rounded-lg font-semibold text-xs transition text-center"
-                  >
-                    🛍️ Endelea Kununua
-                  </Link>
-                  <Link
-                    href="/?cart=1"
-                    className="w-full bg-[#17A398] hover:bg-[#13847b] text-white py-3 rounded-lg font-semibold text-xs transition text-center"
-                  >
-                    🛒 Nenda Kikapuni
-                  </Link>
-                </div>
+            <div className="mt-4 pt-3 border-t border-white/10 flex flex-col gap-1.5 text-[11px] text-white/70">
+              <div className="flex items-center justify-between flex-wrap gap-1">
+                <span>💳 Vodacom Lipa Namba: <strong className="text-white">{LIPA_NAMBA}</strong></span>
+                <span>🏦 NBC: <strong className="text-white">{NBC_ACCOUNT}</strong></span>
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* MAONI YA WATEJA */}
-        <div className="mt-10 sm:mt-14">
-          <h2 className="text-lg sm:text-xl font-bold mb-1">Maoni ya wateja</h2>
-          <p className="text-sm text-[#6B7280] mb-6">
-            {avgRating
-              ? `Wastani: ${avgRating} / 5 kutoka maoni ${reviews.length}`
-              : "Bado hakuna maoni — kuwa wa kwanza kutoa maoni."}
-          </p>
-
-          <form onSubmit={handleReviewSubmit} className="max-w-md mb-8 space-y-3">
-            <input
-              placeholder="Jina lako"
-              value={reviewName}
-              onChange={(e) => setReviewName(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
-            />
-            <select
-              value={reviewRating}
-              onChange={(e) => setReviewRating(Number(e.target.value))}
-              className="w-full px-3 py-2 border rounded-xl text-xs bg-white"
-            >
-              <option value={5}>⭐⭐⭐⭐⭐ Nzuri sana</option>
-              <option value={4}>⭐⭐⭐⭐ Nzuri</option>
-              <option value={3}>⭐⭐⭐ Wastani</option>
-              <option value={2}>⭐⭐ Chini ya wastani</option>
-              <option value={1}>⭐ Mbaya</option>
-            </select>
-            <textarea
-              placeholder="Maoni yako kuhusu bidhaa hii"
-              value={reviewComment}
-              onChange={(e) => setReviewComment(e.target.value)}
-              rows={3}
-              className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
-            ></textarea>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="bg-[#17A398] text-white py-2.5 px-5 rounded-lg font-semibold text-sm"
-            >
-              {submitting ? "Inatuma..." : "Tuma Maoni"}
-            </button>
-          </form>
-
-          <div className="flex flex-col gap-3">
-            {reviews.map((r) => (
-              <div key={r.id} className="bg-white p-4 rounded-xl border border-gray-100">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="font-semibold text-sm">{r.customer_name}</span>
-                  <span className="text-xs text-[#E8A93B]">
-                    {"⭐".repeat(r.rating)}
-                  </span>
-                </div>
-                <p className="text-sm text-[#6B7280] leading-relaxed">{r.comment}</p>
-              </div>
-            ))}
+              <span className="text-white/50">👤 Jina la Akaunti: <strong className="text-white/80">{ACCOUNT_NAME}</strong></span>
+            </div>
           </div>
         </div>
       </section>
+
+      {/* KUHUSU SISI */}
+      <section id="kuhusu" className="max-w-6xl mx-auto px-4 py-10">
+        <div className="text-center max-w-2xl mx-auto mb-8">
+          <span className="inline-block bg-[#17A398]/10 text-[#0B5852] text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-3">
+            Kuhusu Sisi
+          </span>
+          <h2 className="text-xl sm:text-2xl font-bold mb-3">Ishi Kidijitali ni Nani?</h2>
+          <p className="text-xs sm:text-sm text-[#6B7280] leading-relaxed">
+            Ishi Kidijitali tunakuletea bidhaa mbalimbali kutoka China, USA, Dubai na hapa Dar es Salaam -
+            vitu vinavyokusaidia kuongeza ubunifu kwenye biashara yako, kuishi maisha ya kidijitali,
+            kupendezesha nyumba yako, kuanzisha biashara bila mtaji mkubwa, au kukuza biashara uliyonayo
+            tayari. Tunashughulikia utafutaji, ununuzi, na usafirishaji - wewe unabaki na kazi ya kuuza
+            au kutumia bidhaa hiyo.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+          <div className="bg-white border border-[#E4DFD2] rounded-2xl p-4 text-center">
+            <span className="text-2xl block mb-2">💡</span>
+            <p className="text-[11px] sm:text-xs font-bold text-[#12182B]">Ubunifu wa Biashara</p>
+          </div>
+          <div className="bg-white border border-[#E4DFD2] rounded-2xl p-4 text-center">
+            <span className="text-2xl block mb-2">🏠</span>
+            <p className="text-[11px] sm:text-xs font-bold text-[#12182B]">Kupendezesha Nyumba</p>
+          </div>
+          <div className="bg-white border border-[#E4DFD2] rounded-2xl p-4 text-center">
+            <span className="text-2xl block mb-2">🚀</span>
+            <p className="text-[11px] sm:text-xs font-bold text-[#12182B]">Anza Bila Mtaji Mkubwa</p>
+          </div>
+          <div className="bg-white border border-[#E4DFD2] rounded-2xl p-4 text-center">
+            <span className="text-2xl block mb-2">📈</span>
+            <p className="text-[11px] sm:text-xs font-bold text-[#12182B]">Kukuza Biashara Yako</p>
+          </div>
+        </div>
+      </section>
+
+      {/* BILLBOARD - LVR (BUILT DIFFERENT) */}
+      <section className="relative w-full h-[420px] sm:h-[480px] overflow-hidden bg-[#12182B]">
+        {LVR_BILLBOARD_SLIDES.map((slide, i) => {
+          const isActive = i === billboardIdx;
+          if (slide.type === "image") {
+            return (
+              <div key={i} className="absolute inset-0 transition-opacity duration-1000" style={{ opacity: isActive ? 1 : 0 }}>
+                <img src={slide.src} alt="LVR Built Different" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/20"></div>
+                <div className="absolute inset-0 flex flex-col items-center justify-end pb-8 sm:pb-10">
+                  <span className="text-white text-xl sm:text-2xl font-extrabold tracking-tight mb-4 drop-shadow-lg">LVR</span>
+                  <a
+                    href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(LVR_WHATSAPP_MESSAGE)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="bg-white hover:bg-gray-100 text-[#12182B] px-6 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-xl transition-colors"
+                  >
+                    Order Now
+                  </a>
+                </div>
+              </div>
+            );
+          }
+          // TEXT SLIDE - background nzito, maneno makubwa yanayosomeka vizuri
+          return (
+            <div
+              key={i}
+              className="absolute inset-0 bg-[#12182B] flex flex-col items-center justify-center text-center px-6 transition-opacity duration-1000"
+              style={{ opacity: isActive ? 1 : 0 }}
+            >
+              <span className="text-white/70 text-[10px] font-bold uppercase tracking-[0.3em] mb-3">
+                Streetwear • Lifestyle
+              </span>
+              <h2 className="text-white text-3xl sm:text-5xl font-extrabold tracking-tight mb-1">LVR</h2>
+              <p className="text-white/60 text-xs sm:text-sm italic mb-5">built different</p>
+
+              <p className="text-white text-sm sm:text-base max-w-md leading-relaxed mb-3 font-medium">
+                {slide.en}
+              </p>
+              <p className="text-[#E8A93B]/90 text-xs sm:text-sm max-w-md leading-relaxed mb-5 italic">
+                {slide.sw}
+              </p>
+
+              <p className="text-white text-sm sm:text-lg font-extrabold tracking-widest mb-1">
+                {slide.slogan}
+              </p>
+              <p className="text-white/50 text-[10px] sm:text-xs tracking-wider mb-6">
+                {slide.sloganSw}
+              </p>
+
+              <a
+                href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(LVR_WHATSAPP_MESSAGE)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-white hover:bg-gray-100 text-[#12182B] px-6 py-3 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-xl transition-colors"
+              >
+                Order Now
+              </a>
+            </div>
+          );
+        })}
+
+        <div className="absolute top-4 right-4 flex gap-1.5 z-10">
+          {LVR_BILLBOARD_SLIDES.map((_, i) => (
+            <span
+              key={i}
+              className={`h-1.5 rounded-full transition-all duration-500 ${i === billboardIdx ? "w-6 bg-white" : "w-1.5 bg-white/40"}`}
+            ></span>
+          ))}
+        </div>
+      </section>
+
+      {/* DUKA KUU */}
+      <section id="duka" className="max-w-6xl mx-auto px-4 py-10">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-bold">Bidhaa Zilizopo Duka Kuu</h2>
+            <p className="text-xs text-gray-500">Chagua bidhaa na uagize kwa urahisi</p>
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => setCategory(cat.id)}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                  category === cat.id ? "bg-[#12182B] text-white shadow" : "bg-white text-gray-600 border border-gray-200"
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="text-xs text-gray-500 py-8 text-center">Inapakia bidhaa...</p>
+        ) : filteredProducts.length === 0 ? (
+          <p className="text-xs text-gray-500 py-8 text-center">Hakuna bidhaa kwenye category hii kwa sasa.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5">
+            {filteredProducts.map((p) => {
+              const images = getProductImages(p);
+              return (
+                <div key={p.id} className="bg-white border border-[#E4DFD2] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all">
+                  <Link href={`/product/${p.id}`} className="h-40 sm:h-52 bg-[#F0FAF8] relative flex items-center justify-center p-2">
+                    <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#17A398] text-white text-[9px] sm:text-[10px] font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full z-10">
+                      {p.origin || "DSM / China"}
+                    </span>
+                    {images.length > 1 && (
+                      <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-black/50 text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-10">
+                        📷 {images.length}
+                      </span>
+                    )}
+                    {images.length > 0 ? (
+                      <img src={images[0]} alt={p.name} className="h-full object-contain hover:scale-105 transition-transform duration-300" />
+                    ) : (
+                      <span className="text-4xl sm:text-5xl">{p.emoji || "📦"}</span>
+                    )}
+                  </Link>
+
+                  <div className="p-3 sm:p-4 flex flex-col gap-2 flex-1">
+                    <Link href={`/product/${p.id}`}>
+                      <h3 className="text-xs sm:text-sm font-bold text-[#12182B] line-clamp-1">{p.name}</h3>
+                    </Link>
+                    <p className="text-[11px] sm:text-xs text-[#6B7280] line-clamp-2 leading-relaxed">{p.description}</p>
+                    {Number(p.sold_count) > 0 && (
+                      <span className="text-[9px] sm:text-[10px] text-[#E8A93B] font-bold">
+                        🔥 {p.sold_count} wameshanunua
+                      </span>
+                    )}
+
+                    <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(p.price)}</span>
+                        <span className="text-[9px] sm:text-[10px] text-green-600 font-bold">✓ Pay on Delivery</span>
+                      </div>
+                      <button
+                        onClick={() => handleOpenProductModal(p)}
+                        className="bg-[#12182B] hover:bg-[#17A398] text-white text-[11px] sm:text-xs font-bold px-2.5 py-2 sm:px-3 rounded-xl transition-colors"
+                      >
+                        + Ongeza
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* WEKEZA & MALIPO */}
+      <section id="uwekezaji" className="max-w-6xl mx-auto px-4 py-10">
+        <div className="bg-[#12182B] text-white rounded-3xl p-6 sm:p-10 border border-white/10 shadow-xl grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+          <div>
+            <span className="bg-[#E8A93B] text-black text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider">
+              Mfumo wa Akiba & Malipo
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-extrabold mt-3 leading-tight">
+              Lipa Namba ya Vodacom & Akaunti ya NBC
+            </h2>
+            <p className="text-xs sm:text-sm text-white/70 mt-3 leading-relaxed">
+              Tuma malipo au weka akiba kidogo kidogo kuanzia TZS 10,000. Lipa Namba yetu inakaribisha mitandao yote ya simu na benki.
+            </p>
+          </div>
+          <div className="bg-white/5 p-6 rounded-2xl border border-white/10 text-xs text-white/80 space-y-4">
+            <div>
+              <p className="font-bold text-[#E8A93B] text-sm mb-1">📲 Lipa Namba (Vodacom):</p>
+              <p className="text-xl font-black font-mono text-white">{LIPA_NAMBA}</p>
+              <p className="text-[10px] text-white/60">Tigo Pesa, M-Pesa, Airtel Money, Halopesa & Benki</p>
+            </div>
+            <div className="pt-3 border-t border-white/10">
+              <p className="font-bold text-[#E8A93B] text-sm mb-1">🏦 NBC Bank Account:</p>
+              <p className="text-lg font-black font-mono text-white">{NBC_ACCOUNT}</p>
+              <p className="text-[10px] text-white/60">Jina la Akaunti: {ACCOUNT_NAME}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* MASWALI NA MAJIBU (FAQ) */}
+      <section id="maswali" className="max-w-3xl mx-auto px-4 py-10">
+        <div className="text-center mb-6">
+          <span className="inline-block bg-[#17A398]/10 text-[#0B5852] text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-3">
+            Maswali na Majibu
+          </span>
+          <h2 className="text-xl sm:text-2xl font-bold">Tunafanya Kazi Vipi?</h2>
+        </div>
+
+        <div className="space-y-2">
+          {FAQ_ITEMS.map((item, idx) => (
+            <div key={idx} className="bg-white border border-[#E4DFD2] rounded-xl overflow-hidden">
+              <button
+                onClick={() => setOpenFaqIdx(openFaqIdx === idx ? -1 : idx)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+              >
+                <span className="text-xs sm:text-sm font-bold text-[#12182B]">{item.q}</span>
+                <span className={`text-[#17A398] font-bold text-lg shrink-0 transition-transform ${openFaqIdx === idx ? "rotate-45" : ""}`}>+</span>
+              </button>
+              {openFaqIdx === idx && (
+                <div className="px-4 pb-4">
+                  <p className="text-xs sm:text-sm text-[#6B7280] leading-relaxed">{item.a}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 bg-[#12182B] text-white rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold">Bado una swali?</p>
+            <p className="text-xs text-white/60">Service Center: {SERVICE_CENTER_NUMBER}</p>
+          </div>
+          <a
+            href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nina swali kuhusu huduma zenu.")}`}
+            target="_blank"
+            rel="noreferrer"
+            className="bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors whitespace-nowrap"
+          >
+            💬 Wasiliana Nasi WhatsApp
+          </a>
+        </div>
+      </section>
+
+      {/* FOOTER */}
+      <footer className="bg-[#12182B] text-white border-t border-white/10 py-10 px-4 text-xs">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+          <div>
+            <span className="font-bold text-sm text-[#E8A93B]">Ishi Kidijitali</span>
+            <p className="text-white/50 text-[11px] mt-1">© {new Date().getFullYear()} Ishi Kidijitali. Haki zote zimehifadhiwa.</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <a href={SOCIAL_LINKS.instagram} target="_blank" rel="noreferrer" className="w-9 h-9 rounded-full bg-gradient-to-tr from-yellow-500 via-pink-500 to-purple-600 flex items-center justify-center hover:scale-110 transition-transform shadow">
+              <svg className="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+            </a>
+            <a href={SOCIAL_LINKS.facebook} target="_blank" rel="noreferrer" className="w-9 h-9 rounded-full bg-[#1877F2] flex items-center justify-center hover:scale-110 transition-transform shadow">
+              <svg className="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            </a>
+            <a href={SOCIAL_LINKS.tiktok} target="_blank" rel="noreferrer" className="w-9 h-9 rounded-full bg-black flex items-center justify-center hover:scale-110 transition-transform shadow border border-white/20">
+              <svg className="w-4 h-4 fill-white" viewBox="0 0 24 24"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.82.56-1.31 1.52-1.28 2.51.02.83.42 1.63 1.07 2.15.77.63 1.8.88 2.76.71 1.05-.16 1.98-.87 2.37-1.87.27-.67.36-1.41.35-2.13V.02z"/></svg>
+            </a>
+            <a href={SOCIAL_LINKS.pinterest} target="_blank" rel="noreferrer" className="w-9 h-9 rounded-full bg-[#E60023] flex items-center justify-center hover:scale-110 transition-transform shadow">
+              <svg className="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.372 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738.098.119.112.224.083.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.401.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.354-.629-2.758-1.379l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12 0-6.628-5.373-12-12-12z"/></svg>
+            </a>
+            <a href={SOCIAL_LINKS.whatsapp} target="_blank" rel="noreferrer" className="w-9 h-9 rounded-full bg-[#25D366] flex items-center justify-center hover:scale-110 transition-transform shadow">
+              <svg className="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981z"/></svg>
+            </a>
+          </div>
+        </div>
+      </footer>
+
+      {/* PRODUCT VARIATION MODAL - inasoma "variants" JSON kutoka Supabase */}
+      {selectedProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
+
+            {justAddedToCart ? (
+              <div className="flex flex-col items-center text-center py-8 px-2">
+                <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-3">
+                  <span className="text-2xl">✅</span>
+                </div>
+                <h3 className="text-base font-bold text-[#12182B] mb-1">Imeongezwa Kikapuni!</h3>
+                <p className="text-xs text-gray-500 mb-6">{selectedProduct.name}</p>
+                <div className="w-full space-y-2">
+                  <button
+                    onClick={handleContinueShopping}
+                    className="w-full bg-white border-2 border-[#12182B] text-[#12182B] text-xs font-bold py-3 rounded-xl transition-all"
+                  >
+                    🛍️ Endelea Kununua
+                  </button>
+                  <button
+                    onClick={handleGoToCartFromModal}
+                    className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow"
+                  >
+                    🛒 Nenda Kikapuni ({cartCount + 1})
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {(() => {
+                  const sizeObj = modalVariants.sizes.find((s) => s.name === selectedSize);
+                  const colorObj = modalVariants.colors.find((c) => c.name === selectedColor);
+                  const typeObj = modalVariants.types.find((t) => t.name === selectedType);
+                  const optionObjs = Object.entries(modalVariants.options).map(([label, list]) =>
+                    list.find((o) => o.name === selectedOptions[label])
+                  );
+                  const candidates = [...optionObjs, colorObj, typeObj, sizeObj];
+                  const variantImage = candidates.find((c) => c?.image)?.image ?? null;
+                  const variantPrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
+                  const displayImage = variantImage || modalImages[modalGalleryIdx];
+                  const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
+
+                  return (
+                    <>
+                      {(displayImage || modalImages.length > 0) && (
+                        <div className="mb-4">
+                          <div
+                            className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden select-none touch-pan-y"
+                            onTouchStart={handleSwipeStart}
+                            onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, modalImages.length, modalGalleryIdx, setModalGalleryIdx)}
+                          >
+                            {displayImage ? (
+                              <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain pointer-events-none" draggable={false} />
+                            ) : null}
+                          </div>
+                          {!variantImage && modalImages.length > 1 && (
+                            <div className="flex justify-center gap-1.5 mt-2">
+                              {modalImages.map((_, i) => (
+                                <span
+                                  key={i}
+                                  className={`h-1.5 rounded-full transition-all ${i === modalGalleryIdx ? "w-5 bg-[#17A398]" : "w-1.5 bg-gray-300"}`}
+                                ></span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
+                      <p className="text-xs font-bold text-[#17A398] mb-4">
+                        {fmtTZS(displayPrice)}
+                        {variantPrice !== null && variantPrice !== selectedProduct.price && (
+                          <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
+                        )}
+                      </p>
+                    </>
+                  );
+                })()}
+
+                {modalVariants.sizes.length > 0 && (
+                  <div className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua Size:</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {modalVariants.sizes.map((sz) => (
+                        <button
+                          key={sz.name}
+                          onClick={() => setSelectedSize(sz.name)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedSize === sz.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                        >
+                          {sz.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {modalVariants.colors.length > 0 && (
+                  <div className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua Rangi:</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {modalVariants.colors.map((clr) => (
+                        <button
+                          key={clr.name}
+                          onClick={() => setSelectedColor(clr.name)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${selectedColor === clr.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                        >
+                          {clr.image && (
+                            <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
+                          )}
+                          {clr.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {modalVariants.types.length > 0 && (
+                  <div className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo (mfano Watts, Voltage, 220V/Battery):</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {modalVariants.types.map((tp) => (
+                        <button
+                          key={tp.name}
+                          onClick={() => setSelectedType(tp.name)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedType === tp.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                        >
+                          {tp.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity n.k) */}
+                {Object.entries(modalVariants.options).map(([label, list]) => (
+                  <div key={label} className="mb-4">
+                    <label className="text-xs font-bold block mb-1">Chagua {label}:</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {list.map((opt) => (
+                        <button
+                          key={opt.name}
+                          onClick={() => setSelectedOptions((prev) => ({ ...prev, [label]: opt.name }))}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${
+                            selectedOptions[label] === opt.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"
+                          }`}
+                        >
+                          {opt.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  onClick={handleAddToCartWithOptions}
+                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
+                >
+                  Weka Kikapuni 🛒
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TRACKING MODAL - INATAFUTA ODA HALISI KWENYE SUPABASE */}
+      {showTrackingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto">
+            <button onClick={closeTrackingModal} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
+            <h3 className="text-base font-bold text-[#12182B] mb-3">📦 Fuatilia Mzigo Wako</h3>
+            <p className="text-xs text-gray-500 mb-4">Weka namba ya simu uliyotumia wakati wa kuagiza, tutakuonyesha oda zako.</p>
+
+            <form onSubmit={handleTrackOrder} className="flex gap-2 mb-4">
+              <input
+                type="text"
+                required
+                placeholder="0754XXXXXX"
+                value={trackingInput}
+                onChange={(e) => setTrackingInput(e.target.value)}
+                className="flex-1 px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+              />
+              <button
+                type="submit"
+                disabled={trackingLoading}
+                className="bg-[#12182B] hover:bg-[#17A398] disabled:opacity-60 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors"
+              >
+                {trackingLoading ? "..." : "Tafuta"}
+              </button>
+            </form>
+
+            {trackingError && (
+              <p className="text-xs text-red-500 font-medium mb-3">⚠️ {trackingError}</p>
+            )}
+
+            {trackingResults && (
+              <div className="space-y-3 mb-4">
+                {trackingResults.map((order) => {
+                  const journey = getOrderJourney(order, products);
+                  return (
+                    <div key={order.id} className="p-3 bg-[#F7F3EA] rounded-xl text-xs">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-[#12182B]">Oda #{order.id}</span>
+                        <span className="bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full text-[10px] uppercase">
+                          {order.status || "pending"}
+                        </span>
+                      </div>
+                      <p className="text-gray-600">📍 {order.region}</p>
+                      <p className="text-gray-600">💵 {fmtTZS(order.total)}</p>
+                      <p className="text-gray-400 text-[10px] mt-1 mb-2">
+                        {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
+                      </p>
+
+                      {/* ANIMATION YA USAFIRI - inasogea kulingana na status */}
+                      {!journey.isCancelled && (
+                        <div className="mt-2 pt-2 border-t border-black/5">
+                          <div className="flex justify-between text-[8px] text-gray-500 font-semibold mb-2">
+                            {journey.checkpoints.map((cp, i) => (
+                              <span key={i} className={journey.progress >= cp.at ? "text-[#17A398]" : ""}>
+                                {cp.label}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="relative h-1.5 bg-gray-200 rounded-full overflow-visible">
+                            <div
+                              className="absolute left-0 top-0 h-full bg-[#17A398] rounded-full transition-all duration-1000 ease-out"
+                              style={{ width: `${journey.progress}%` }}
+                            ></div>
+                            {journey.checkpoints.map((cp, i) => (
+                              <div
+                                key={i}
+                                className="absolute top-1/2 w-2 h-2 rounded-full border-2 border-white"
+                                style={{
+                                  left: `${cp.at}%`,
+                                  transform: "translate(-50%, -50%)",
+                                  backgroundColor: journey.progress >= cp.at ? "#17A398" : "#D1D5DB",
+                                }}
+                              ></div>
+                            ))}
+                            <div
+                              className="absolute top-1/2 tracking-icon-move"
+                              style={{ left: `${journey.progress}%`, transform: "translate(-50%, -50%)" }}
+                            >
+                              <span className="text-base inline-block drop-shadow">{journey.icon}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <style jsx>{`
+              @keyframes trackingIconBob {
+                0%, 100% { margin-top: 0px; }
+                50% { margin-top: -3px; }
+              }
+              .tracking-icon-move {
+                animation: trackingIconBob 1.4s ease-in-out infinite;
+              }
+            `}</style>
+
+            <a
+              href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nataka msaada kuhusu mzigo wangu.")}`}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-center w-full bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold py-3 rounded-xl transition-colors"
+            >
+              Bado Una Swali? Wasiliana Nasi WhatsApp
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* KIKAPU DRAWER */}
+      {showCartDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md h-full p-5 sm:p-6 flex flex-col justify-between relative shadow-2xl overflow-y-auto">
+            <div>
+              <div className="flex justify-between items-center pb-4 border-b border-gray-100">
+                <h3 className="text-base font-bold text-[#12182B]">
+                  {checkoutStatus === "success" ? "🛒 Kikapu Chako" : `🛒 Kikapu Chako (${cartCount})`}
+                </h3>
+                <button
+                  onClick={() => (checkoutStatus === "success" ? closeCheckoutSuccess() : setShowCartDrawer(false))}
+                  className="text-gray-400 font-bold hover:text-black"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {checkoutStatus === "success" ? (
+                <div className="flex flex-col items-center justify-center text-center py-16 px-4">
+                  <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
+                    <span className="text-3xl">✅</span>
+                  </div>
+                  <h3 className="text-base font-bold text-[#12182B] mb-2">Ombi Lako Limepokelewa!</h3>
+                  <p className="text-xs text-gray-500 mb-6 max-w-xs leading-relaxed">
+                    Asante kwa oda yako. Timu yetu imepokea taarifa zote na utataarifiwa hivi karibuni
+                    kupitia WhatsApp / Simu kuhusu hatua zinazofuata za usafirishaji.
+                  </p>
+                  <div className="w-full max-w-xs space-y-2">
+                    {lastOrder && (
+                      <button
+                        onClick={() => downloadReceipt(lastOrder)}
+                        className="w-full bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] text-xs font-bold px-6 py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+                      >
+                        📥 Pakua Risiti
+                      </button>
+                    )}
+                    <button
+                      onClick={closeCheckoutSuccess}
+                      className="w-full bg-[#12182B] hover:bg-[#17A398] text-white text-xs font-bold px-6 py-3 rounded-xl transition-colors"
+                    >
+                      Sawa, Nimeelewa
+                    </button>
+                  </div>
+                </div>
+              ) : cart.length === 0 ? (
+                <p className="text-xs text-gray-500 py-10 text-center">Kikapu chako kipo wazi kwa sasa.</p>
+              ) : (
+                <>
+                  <div className="mt-4 space-y-3 max-h-[35vh] overflow-y-auto pr-1 border-b border-gray-100 pb-4">
+                    {cart.map((item, idx) => {
+                      const itemKey = item.cartItemId || item.id;
+                      return (
+                        <div key={itemKey || idx} className="p-3 bg-[#F7F3EA] rounded-xl flex items-center justify-between text-xs gap-2">
+                          <div className="flex-1 pr-2">
+                            <h4 className="font-bold text-[#12182B]">{item.name}</h4>
+                            <div className="text-[10px] text-gray-500 flex flex-wrap gap-x-2">
+                              {item.selectedSize && <span>Size: {item.selectedSize}</span>}
+                              {item.selectedColor && <span>Rangi: {item.selectedColor}</span>}
+                              {item.selectedType && <span>Aina: {item.selectedType}</span>}
+                              {item.selectedOptions &&
+                                Object.entries(item.selectedOptions).map(([label, val]) =>
+                                  val ? <span key={label}>{label}: {val}</span> : null
+                                )}
+                            </div>
+                            <span className="font-bold text-[#17A398]">{fmtTZS(item.price)}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button onClick={() => handleQtyChange(itemKey, -1)} className="bg-gray-200 text-black px-2 py-0.5 rounded font-bold">-</button>
+                            <span className="font-bold">{item.qty || 1}</span>
+                            <button onClick={() => handleQtyChange(itemKey, 1)} className="bg-gray-200 text-black px-2 py-0.5 rounded font-bold">+</button>
+                            <button onClick={() => removeFromCart && removeFromCart(itemKey)} className="text-red-500 font-bold ml-1">✕</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <form onSubmit={handleWhatsAppCheckout} className="mt-4 space-y-3">
+                    <h4 className="text-xs font-extrabold text-[#12182B] uppercase tracking-wider">Taarifa za Mteja & Mkoa</h4>
+
+                    <div>
+                      <label className="text-[11px] font-bold block mb-1">Jina Kamili:</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Mfano: Juma Ally"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] font-bold block mb-1">Simu (WhatsApp):</label>
+                        <input
+                          type="tel"
+                          required
+                          placeholder="0754XXXXXX"
+                          value={customerPhone}
+                          onChange={(e) => setCustomerPhone(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold block mb-1">Mkoa Unapokaa:</label>
+                        <select
+                          value={customerMkoa}
+                          onChange={(e) => setCustomerMkoa(e.target.value)}
+                          className="w-full px-2 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398] bg-white font-semibold"
+                        >
+                          {MIKOA.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold block mb-1">Wilaya / Eneo / Mtaa:</label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Mfano: Ubungo, Sinza au Mbeya Mjini"
+                        value={customerAddress}
+                        onChange={(e) => setCustomerAddress(e.target.value)}
+                        className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                      />
+                    </div>
+
+                    <div className="pt-3 border-t border-gray-100 space-y-2">
+                      <div className="flex justify-between items-center text-sm font-extrabold">
+                        <span>Jumla Kuu:</span>
+                        <span className="text-[#17A398] text-base">{fmtTZS(cartTotal)}</span>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={checkoutStatus === "submitting"}
+                        className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 shadow"
+                      >
+                        <span>
+                          {checkoutStatus === "submitting" ? "⏳ Inatuma Oda..." : "💬 Tuma Oda Hii WhatsApp"}
+                        </span>
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

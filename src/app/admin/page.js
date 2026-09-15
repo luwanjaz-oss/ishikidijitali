@@ -2,31 +2,36 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import { downloadReceipt } from "@/lib/receipt";
 
-// Hii inatumika TU kama oda ya zamani haina commission_total iliyohifadhiwa.
-// Oda mpya zote zinatumia commission_total iliyokokotolewa wakati wa checkout
-// kutoka kwenye "commission" ya kila bidhaa (angalia app/page.js).
-const FALLBACK_COMMISSION_RATE = 0.20; // 20%
+// TAHADHARI: Hii ni ulinzi rahisi (password moja) kwa matumizi ya ndani tu.
+// Usishiriki link hii ya /admin hadharani. Ukitaka ubadilishe password,
+// badilisha thamani hii tu.
+const ADMIN_PASSWORD = "ishiki2026";
 
-function fmtTZS(n) {
-  return (n || 0).toLocaleString("en-US") + " TZS";
-}
+const STATUS_OPTIONS = [
+  { value: "pending", label: "⏳ Pending (Mpya)" },
+  { value: "inasindikwa", label: "🛒 Inasindikwa (Tunatafuta/Kununua)" },
+  { value: "imenunuliwa", label: "🧾 Imenunuliwa Nje (Inasubiri Kusafirishwa)" },
+  { value: "inasafirishwa_nje", label: "✈️ Inasafirishwa Kutoka Nje (Ndege/Meli)" },
+  { value: "forodha_dsm", label: "🛃 Forodha DSM (Import Duties)" },
+  { value: "imefika_dsm", label: "📦 Imefika Dar es Salaam" },
+  { value: "inasafirishwa_mkoani", label: "🚚 Inasafirishwa Kwenda Mkoani" },
+  { value: "imefika_mkoani", label: "📍 Imefika Mkoani" },
+  { value: "delivered", label: "✅ Imekamilika (Delivered)" },
+  { value: "cancelled", label: "❌ Imeghairiwa" },
+];
 
-// Hali ya malipo ya mteja - inasomwa moja kwa moja kutoka Supabase
-// (orders.payment_status), inayowekwa na Admin. Inamsaidia msambazaji
-// kujua kama mteja wake amelipa, atalipa mzigo ukifika, kalipa kidogo,
-// au bado hajalipa kabisa.
+const PAYMENT_STATUS_OPTIONS = [
+  { value: "hajalipa", label: "❌ Hajalipa" },
+  { value: "atalipa_mzigo_ukifika", label: "📦 Atalipa Mzigo Ukifika (COD)" },
+  { value: "amelipa_kidogo", label: "💰 Amelipa Kidogo (Deposit)" },
+  { value: "amelipa_kamili", label: "✅ Amelipa Kamili" },
+];
+
 function paymentStatusLabel(value) {
-  switch (value) {
-    case "amelipa_kamili":
-      return "✅ Amelipa Kamili";
-    case "amelipa_kidogo":
-      return "💰 Amelipa Kidogo (Deposit)";
-    case "atalipa_mzigo_ukifika":
-      return "📦 Atalipa Mzigo Ukifika";
-    default:
-      return "❌ Hajalipa Bado";
-  }
+  const found = PAYMENT_STATUS_OPTIONS.find((s) => s.value === value);
+  return found ? found.label : "❌ Hajalipa";
 }
 
 function paymentStatusColor(value) {
@@ -42,102 +47,251 @@ function paymentStatusColor(value) {
   }
 }
 
-function generateRefCode(fullName) {
-  const base =
-    (fullName || "ISHIKI")
-      .trim()
-      .split(" ")[0]
-      .toUpperCase()
-      .replace(/[^A-Z]/g, "")
-      .slice(0, 6) || "ISHIKI";
-  const random = Math.random().toString(36).slice(2, 7).toUpperCase();
-  return `${base}-${random}`;
+function fmtTZS(n) {
+  return (n || 0).toLocaleString("en-US") + " TZS";
 }
 
-export default function WasambajiPage() {
-  const [refCode, setRefCode] = useState(null);
-  const [affiliate, setAffiliate] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [siteUrl, setSiteUrl] = useState("");
-  const [copied, setCopied] = useState(false);
+function statusLabel(value) {
+  const found = STATUS_OPTIONS.find((s) => s.value === value);
+  return found ? found.label : value || "pending";
+}
+
+function statusColor(value) {
+  switch (value) {
+    case "delivered":
+      return "bg-green-100 text-green-700";
+    case "cancelled":
+      return "bg-red-100 text-red-700";
+    case "inasafirishwa":
+      return "bg-blue-100 text-blue-700";
+    case "imefika_mkoani":
+      return "bg-purple-100 text-purple-700";
+    case "inasindikwa":
+      return "bg-amber-100 text-amber-700";
+    default:
+      return "bg-gray-100 text-gray-700";
+  }
+}
+
+function parseItems(itemsRaw) {
+  if (!itemsRaw) return [];
+  try {
+    const parsed = typeof itemsRaw === "string" ? JSON.parse(itemsRaw) : itemsRaw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Inabadilisha "order" iliyopakiwa kutoka Supabase kuwa muundo unaotakiwa
+// na downloadReceipt() (ile ile inayotumika mara baada ya checkout).
+function orderToReceiptShape(order) {
+  const items = parseItems(order.items).map((it) => ({
+    name: it.name,
+    qty: it.qty || 1,
+    price: it.price,
+    selectedSize: it.size || null,
+    selectedColor: it.color || null,
+    selectedType: it.type || null,
+    selectedOptions: it.options || null,
+  }));
+  return {
+    id: order.id,
+    date: order.created_at,
+    customerName: order.customer_name,
+    customerPhone: order.customer_phone,
+    customerMkoa: order.region,
+    customerAddress: "",
+    items,
+    subtotal: order.subtotal,
+    shippingFee: order.shipping_fee,
+    total: order.total,
+  };
+}
+
+export default function AdminPage() {
+  const [authenticated, setAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [authError, setAuthError] = useState("");
 
   const [orders, setOrders] = useState([]);
-  const [totalSales, setTotalSales] = useState(0);
-  const [totalCommission, setTotalCommission] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [updatingId, setUpdatingId] = useState(null);
 
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [regError, setRegError] = useState("");
-  const [regSubmitting, setRegSubmitting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("wote");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+
+  // Simu za wasambazaji (ref_code -> phone/full_name), inatumika kutuma
+  // WhatsApp haraka bila kuingia jedwali la affiliates kila wakati.
+  const [affiliatesMap, setAffiliatesMap] = useState({});
+  const [paidDrafts, setPaidDrafts] = useState({});
+  const [savingPaidRefCode, setSavingPaidRefCode] = useState(null);
+  const [showPayoutPanel, setShowPayoutPanel] = useState(false);
+
+  // "Bidhaa Zilizouzwa" - orodha ya products na sold_count yake, admin
+  // anaweza kubadilisha mwenyewe au kukokotoa kiotomatiki kutoka oda halisi.
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+  const [savingProductId, setSavingProductId] = useState(null);
+  const [soldCountDrafts, setSoldCountDrafts] = useState({});
+  const [recalculating, setRecalculating] = useState(false);
+  const [showSoldPanel, setShowSoldPanel] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setSiteUrl(window.location.origin);
-      const saved = localStorage.getItem("ishiki_affiliate_session");
-      if (saved) {
-        setRefCode(saved);
-      }
+      const saved = sessionStorage.getItem("ishiki_admin_authed");
+      if (saved === "yes") setAuthenticated(true);
     }
-    setLoading(false);
   }, []);
 
-  const fetchAffiliateData = async (code) => {
-    if (!code) return;
-
-    const { data: affRows } = await supabase
-      .from("affiliates")
-      .select("*")
-      .eq("ref_code", code)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (affRows && affRows.length > 0) setAffiliate(affRows[0]);
-
-    const { data: ordersData, error } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("ref_code", code)
-      .order("created_at", { ascending: false });
-
-    if (ordersData && !error) {
-      setOrders(ordersData);
-
-      const salesSum = ordersData.reduce(
-        (sum, item) => sum + (Number(item.total) || 0),
-        0
-      );
-      setTotalSales(salesSum);
-
-      // Kila oda tayari ina commission_total iliyokokotolewa kwa usahihi
-      // kutoka kwenye commission ya kila bidhaa iliyouzwa (checkout time).
-      const commSum = ordersData.reduce((sum, item) => {
-        const comm = item.commission_total !== null && item.commission_total !== undefined
-          ? Number(item.commission_total)
-          : (Number(item.total) || 0) * FALLBACK_COMMISSION_RATE;
-        return sum + comm;
-      }, 0);
-
-      setTotalCommission(commSum);
-    }
-  };
-
   useEffect(() => {
-    if (!refCode) return;
+    if (!authenticated) return;
+    loadOrders();
+    loadAffiliates();
+    loadProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated]);
 
-    fetchAffiliateData(refCode);
+  async function loadAffiliates() {
+    try {
+      const { data, error } = await supabase.from("affiliates").select("id, ref_code, phone, full_name, total_paid");
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach((a) => {
+        map[a.ref_code] = { id: a.id, phone: a.phone, full_name: a.full_name, total_paid: a.total_paid || 0 };
+      });
+      setAffiliatesMap(map);
+      const drafts = {};
+      (data || []).forEach((a) => {
+        drafts[a.ref_code] = a.total_paid || 0;
+      });
+      setPaidDrafts(drafts);
+    } catch (err) {
+      console.error("Load affiliates error:", err);
+    }
+  }
+
+  async function handleSavePaid(refCode) {
+    setSavingPaidRefCode(refCode);
+    try {
+      const affId = affiliatesMap[refCode]?.id;
+      if (!affId) throw new Error("Affiliate haijapatikana");
+      const newPaid = Number(paidDrafts[refCode]) || 0;
+      const { error } = await supabase.from("affiliates").update({ total_paid: newPaid }).eq("id", affId);
+      if (error) throw error;
+      setAffiliatesMap((prev) => ({
+        ...prev,
+        [refCode]: { ...prev[refCode], total_paid: newPaid },
+      }));
+    } catch (err) {
+      console.error("Save total_paid error:", err);
+      alert("Imeshindwa kuhifadhi: " + (err.message || "unknown error"));
+    } finally {
+      setSavingPaidRefCode(null);
+    }
+  }
+
+  async function loadProducts() {
+    setProductsLoading(true);
+    try {
+      const { data, error } = await supabase.from("products").select("id, name, sold_count").order("id", { ascending: true });
+      if (error) throw error;
+      setProducts(data || []);
+      const drafts = {};
+      (data || []).forEach((p) => {
+        drafts[p.id] = p.sold_count ?? 0;
+      });
+      setSoldCountDrafts(drafts);
+    } catch (err) {
+      console.error("Load products error:", err);
+    } finally {
+      setProductsLoading(false);
+    }
+  }
+
+  async function handleSaveSoldCount(productId) {
+    setSavingProductId(productId);
+    try {
+      const newCount = Number(soldCountDrafts[productId]) || 0;
+      const { error } = await supabase.from("products").update({ sold_count: newCount }).eq("id", productId);
+      if (error) throw error;
+      setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, sold_count: newCount } : p)));
+    } catch (err) {
+      console.error("Save sold_count error:", err);
+      alert("Imeshindwa kuhifadhi: " + (err.message || "unknown error"));
+    } finally {
+      setSavingProductId(null);
+    }
+  }
+
+  // Inakokotoa jumla ya idadi ya kila bidhaa iliyouzwa kwa kuchambua
+  // "items" za oda ZOTE (kwa jina la bidhaa), kisha kuhifadhi Supabase.
+  async function handleRecalculateFromOrders() {
+    setRecalculating(true);
+    try {
+      const counts = {};
+      orders.forEach((o) => {
+        const items = parseItems(o.items);
+        items.forEach((it) => {
+          const key = (it.name || "").trim().toLowerCase();
+          if (!key) return;
+          counts[key] = (counts[key] || 0) + (it.qty || 1);
+        });
+      });
+
+      const updates = products.map((p) => {
+        const key = (p.name || "").trim().toLowerCase();
+        return { id: p.id, sold_count: counts[key] || 0 };
+      });
+
+      for (const u of updates) {
+        await supabase.from("products").update({ sold_count: u.sold_count }).eq("id", u.id);
+      }
+
+      await loadProducts();
+      alert("Imekamilika! Idadi za mauzo zimekokotolewa kutoka oda halisi.");
+    } catch (err) {
+      console.error("Recalculate error:", err);
+      alert("Imeshindwa kukokotoa: " + (err.message || "unknown error"));
+    } finally {
+      setRecalculating(false);
+    }
+  }
+
+  // NOTIFICATION - inatuma notification ya browser + sauti kila mara oda
+  // mpya inapoingia, wakati dashboard hii iko wazi (real-time kupitia Supabase).
+  useEffect(() => {
+    if (!authenticated) return;
+
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
 
     const channel = supabase
-      .channel("realtime-orders")
+      .channel("admin-new-orders")
       .on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "orders",
-          filter: `ref_code=eq.${refCode}`,
-        },
-        () => {
-          fetchAffiliateData(refCode);
+        { event: "INSERT", schema: "public", table: "orders" },
+        (payload) => {
+          const newOrder = payload.new;
+
+          // Sauti ya arifa
+          try {
+            const audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
+            audio.play().catch(() => {});
+          } catch {}
+
+          // Notification ya browser (ikiwa ruhusa imetolewa)
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+            new Notification("📦 Oda Mpya - Ishi Kidijitali", {
+              body: `${newOrder.customer_name || "Mteja"} - ${newOrder.customer_phone || ""}`,
+            });
+          }
+
+          // Ongeza oda mpya juu ya orodha bila kureload
+          setOrders((prev) => [newOrder, ...prev]);
         }
       )
       .subscribe();
@@ -145,169 +299,141 @@ export default function WasambajiPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refCode]);
+  }, [authenticated]);
 
-  function copyLink() {
-    const link = `${siteUrl}/?ref=${refCode}`;
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  }
-
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    if (regSubmitting) return;
-
-    setRegError("");
-    setRegSubmitting(true);
-
-    const cleanName = fullName.trim();
-    const cleanPhone = phone.trim();
-
+  async function loadOrders() {
+    setLoading(true);
+    setLoadError("");
     try {
-      const { data: existingRows, error: lookupErr } = await supabase
-        .from("affiliates")
+      const { data, error } = await supabase
+        .from("orders")
         .select("*")
-        .eq("phone", cleanPhone)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (lookupErr) throw lookupErr;
-
-      const existing = existingRows && existingRows.length > 0 ? existingRows[0] : null;
-
-      if (existing) {
-        localStorage.setItem("ishiki_affiliate_session", existing.ref_code);
-        setRefCode(existing.ref_code);
-        setRegSubmitting(false);
-        return;
-      }
-
-      // SHERIA MPYA: Kama kifaa hiki kilifikia tovuti kupitia link ya
-      // msambazaji mwingine (?ref=...), mtu huyu HAWEZI kujiunga kama
-      // msambazaji mpaka kwanza awe amenunua bidhaa kupitia link hiyo
-      // (namba yake ya simu ionekane kwenye "orders" ikiwa na ref_code hiyo).
-      const referringCode = typeof window !== "undefined" ? localStorage.getItem("ishiki_ref_code") : null;
-      if (referringCode) {
-        const { data: purchaseRows, error: purchaseErr } = await supabase
-          .from("orders")
-          .select("id")
-          .eq("ref_code", referringCode)
-          .eq("customer_phone", cleanPhone)
-          .limit(1);
-
-        if (purchaseErr) throw purchaseErr;
-
-        if (!purchaseRows || purchaseRows.length === 0) {
-          setRegError(
-            "Kabla ya kujiunga kama msambazaji, ni lazima kwanza ununue bidhaa kupitia link uliyopewa. Baada ya kununua, jaribu kujisajili tena kwa namba hiyo hiyo ya simu."
-          );
-          setRegSubmitting(false);
-          return;
-        }
-      }
-
-      let created = null;
-      let lastError = null;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const candidateCode = generateRefCode(cleanName);
-        const { data: inserted, error: insertErr } = await supabase
-          .from("affiliates")
-          .insert([{ full_name: cleanName, phone: cleanPhone, ref_code: candidateCode }])
-          .select()
-          .maybeSingle();
-
-        if (!insertErr) {
-          created = inserted || { full_name: cleanName, phone: cleanPhone, ref_code: candidateCode };
-          break;
-        }
-
-        lastError = insertErr;
-        if (insertErr.code !== "23505") break;
-      }
-
-      if (!created) throw lastError || new Error("Imeshindwa kujisajili");
-
-      localStorage.setItem("ishiki_affiliate_session", created.ref_code);
-      setAffiliate(created);
-      setRefCode(created.ref_code);
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setOrders(data || []);
     } catch (err) {
-      console.error("Affiliate registration error:", err);
-      setRegError(
-        err?.message
-          ? `Imeshindwa kujisajili: ${err.message}`
-          : "Imeshindwa kujisajili. Tafadhali angalia mtandao wako na ujaribu tena."
-      );
+      console.error("Admin load orders error:", err);
+      setLoadError("Imeshindwa kupakia oda. Tafadhali jaribu tena.");
     } finally {
-      setRegSubmitting(false);
+      setLoading(false);
     }
-  };
-
-  if (loading) {
-    return <p className="text-center p-10 text-gray-500">Inapakia...</p>;
   }
 
-  if (!refCode) {
+  function handleLogin(e) {
+    e.preventDefault();
+    if (passwordInput === ADMIN_PASSWORD) {
+      setAuthenticated(true);
+      setAuthError("");
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("ishiki_admin_authed", "yes");
+      }
+    } else {
+      setAuthError("Password si sahihi. Jaribu tena.");
+    }
+  }
+
+  function handleLogout() {
+    setAuthenticated(false);
+    setPasswordInput("");
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("ishiki_admin_authed");
+    }
+  }
+
+  async function handleStatusChange(orderId, newStatus) {
+    setUpdatingId(orderId);
+    try {
+      const { error } = await supabase
+        .from("orders")
+        .update({ status: newStatus })
+        .eq("id", orderId);
+      if (error) throw error;
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+      );
+    } catch (err) {
+      console.error("Status update error:", err);
+      alert("Imeshindwa kubadilisha status: " + (err.message || "unknown error"));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  // Hali ya MALIPO (siyo usafirishaji) - inaonekana moja kwa moja kwenye
+  // dashboard ya msambazaji, ili aelewe kama mteja wake amelipa, atalipa
+  // mzigo ukifika, amelipa kidogo, au bado hajalipa kabisa.
+  async function handlePaymentStatusChange(orderId, newPaymentStatus) {
+    setUpdatingId(`pay-${orderId}`);
+    try {
+      const { error } = await supabase
+        .from("orders")
+        .update({ payment_status: newPaymentStatus })
+        .eq("id", orderId);
+      if (error) throw error;
+      setOrders((prev) =>
+        prev.map((o) => (o.id === orderId ? { ...o, payment_status: newPaymentStatus } : o))
+      );
+    } catch (err) {
+      console.error("Payment status update error:", err);
+      alert("Imeshindwa kubadilisha hali ya malipo: " + (err.message || "unknown error"));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  const filteredOrders = orders.filter((o) => {
+    const matchesStatus = statusFilter === "wote" || (o.status || "pending") === statusFilter;
+    const q = searchQuery.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (o.customer_name || "").toLowerCase().includes(q) ||
+      (o.customer_phone || "").includes(q) ||
+      String(o.id).includes(q);
+    return matchesStatus && matchesSearch;
+  });
+
+  // MUHTASARI WA JUMLA - Wasambazaji/link zilizoongoza kwa mauzo, na jumla
+  // ya bidhaa zilizouzwa (zinatokana na "orders" tulizoshapakia juu).
+  const totalRevenue = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+  const totalOrders = orders.length;
+  const totalItemsSold = orders.reduce((sum, o) => sum + parseItems(o.items).reduce((s, it) => s + (it.qty || 1), 0), 0);
+
+  const refCodeStats = {};
+  orders.forEach((o) => {
+    if (!o.ref_code) return;
+    if (!refCodeStats[o.ref_code]) {
+      refCodeStats[o.ref_code] = { ref_code: o.ref_code, orders: 0, revenue: 0, commission: 0 };
+    }
+    refCodeStats[o.ref_code].orders += 1;
+    refCodeStats[o.ref_code].revenue += Number(o.total) || 0;
+    refCodeStats[o.ref_code].commission += Number(o.commission_total) || 0;
+  });
+  const topAffiliates = Object.values(refCodeStats).sort((a, b) => b.revenue - a.revenue);
+
+  if (!authenticated) {
     return (
-      <main className="min-h-screen bg-[#F8F9FA] text-[#12182B] flex items-center justify-center px-4 py-10">
-        <div className="bg-white border border-gray-200 p-6 sm:p-8 rounded-2xl shadow-sm max-w-md w-full">
-          <span className="inline-block bg-[#17A398]/10 text-[#17A398] text-[10px] font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-3">
-            Jiunge Nasi
-          </span>
-          <h1 className="text-xl font-bold mb-1">Jisajili Kama Msambazaji</h1>
-          <p className="text-xs text-gray-500 mb-6 leading-relaxed">
-            Jaza taarifa zako ili upate link yako binafsi ya kusambaza na uanze kupata
-            commission kwa kila mauzo yanayofanyika kupitia link yako.
-          </p>
-
-          <form onSubmit={handleRegister} className="space-y-4">
-            <div>
-              <label className="text-[11px] font-bold block mb-1">Jina Kamili</label>
-              <input
-                type="text"
-                required
-                placeholder="Mfano: Juma Ally"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
-              />
-            </div>
-
-            <div>
-              <label className="text-[11px] font-bold block mb-1">Namba ya Simu (WhatsApp)</label>
-              <input
-                type="tel"
-                required
-                placeholder="0754XXXXXX"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
-              />
-              <p className="text-[10px] text-gray-400 mt-1">
-                Hakikisha namba hii ina WhatsApp - ndiyo utakayowasiliana nayo kuhusu oda na malipo.
-              </p>
-            </div>
-
-            {regError && (
-              <p className="text-[11px] text-red-500 font-semibold">{regError}</p>
-            )}
-
+      <main className="min-h-screen bg-[#12182B] flex items-center justify-center px-4">
+        <div className="bg-white rounded-2xl p-6 sm:p-8 max-w-sm w-full shadow-2xl">
+          <h1 className="text-lg font-bold text-[#12182B] mb-1">🔐 Admin - Ishi Kidijitali</h1>
+          <p className="text-xs text-gray-500 mb-5">Weka password kuona na kusimamia oda.</p>
+          <form onSubmit={handleLogin} className="space-y-3">
+            <input
+              type="password"
+              required
+              autoFocus
+              placeholder="Password"
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              className="w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-[#17A398]"
+            />
+            {authError && <p className="text-xs text-red-500 font-medium">{authError}</p>}
             <button
               type="submit"
-              disabled={regSubmitting}
-              className="w-full bg-[#12182B] hover:bg-[#17A398] disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-xs transition-colors"
+              className="w-full bg-[#12182B] hover:bg-[#17A398] text-white font-bold py-2.5 rounded-xl text-sm transition-colors"
             >
-              {regSubmitting ? "Inasajili..." : "Jisajili Sasa 🤝"}
+              Ingia
             </button>
           </form>
-
-          <p className="text-[10px] text-gray-400 mt-4 text-center leading-relaxed">
-            Tayari umeshajisajili awali kwenye kifaa kingine? Weka namba yako ya simu
-            hapo juu ili turejeshe akaunti yako.
-          </p>
-
           <Link href="/" className="block text-center text-[#17A398] text-xs font-bold underline mt-4">
             Rudi Nyumbani
           </Link>
@@ -318,148 +444,382 @@ export default function WasambajiPage() {
 
   return (
     <main className="min-h-screen bg-[#F8F9FA] text-[#12182B]">
-      <header className="sticky top-0 z-50 bg-[#12182B] border-b border-white/10 px-4 sm:px-6 py-4 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="bg-[#E5383B] text-white text-xs font-bold px-2 py-1 rounded">
-            Ishi
-          </span>
-          <span className="text-white font-bold text-base">Kidijitali</span>
-        </Link>
+      <header className="sticky top-0 z-50 bg-[#12182B] border-b border-white/10 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="bg-[#E5383B] text-white text-xs font-bold px-2 py-1 rounded">Ishi</span>
+          <span className="text-white font-bold text-sm">Admin - Oda</span>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="text-white/60 hover:text-white text-xs font-semibold underline"
+        >
+          Toka
+        </button>
       </header>
 
-      <section className="max-w-4xl mx-auto px-4 py-6 sm:py-8">
-        <div className="space-y-6">
-          <div className="bg-white border border-gray-200 p-5 sm:p-6 rounded-2xl shadow-sm flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold">
-                Hujambo, {affiliate?.full_name || affiliate?.name || "Msambazaji"} 👋
-              </h1>
-              <p className="text-xs text-gray-500 mt-1">
-                Namba ya Simu: {affiliate?.phone || "—"} | Code: <strong>{refCode}</strong>
-              </p>
-              <p className="text-[10px] text-gray-400 mt-1">
-                Commission hutofautiana kwa kila bidhaa (angalia % kwenye ukurasa wa bidhaa husika)
-              </p>
+      <section className="max-w-4xl mx-auto px-4 py-5">
+        {typeof window !== "undefined" && "Notification" in window && Notification.permission !== "granted" && (
+          <button
+            onClick={() => Notification.requestPermission()}
+            className="w-full mb-4 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold px-4 py-2.5 rounded-xl text-left"
+          >
+            🔔 Bonyeza hapa kuwasha notification ya oda mpya (browser)
+          </button>
+        )}
+
+        {/* MUHTASARI WA JUMLA */}
+        {!loading && orders.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Jumla ya Oda</p>
+              <p className="text-lg font-extrabold text-[#12182B]">{totalOrders}</p>
             </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Bidhaa Zilizouzwa</p>
+              <p className="text-lg font-extrabold text-[#12182B]">{totalItemsSold}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Mapato Yote</p>
+              <p className="text-sm font-extrabold text-[#17A398]">{fmtTZS(totalRevenue)}</p>
+            </div>
+          </div>
+        )}
+
+        {/* WASAMBAZAJI / LINK ZILIZOONGOZA KWA MAUZO */}
+        {!loading && topAffiliates.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5">
+            <p className="text-xs font-bold text-[#12182B] mb-3">🏆 Wasambazaji Bora (kwa Mauzo)</p>
+            <div className="space-y-2">
+              {topAffiliates.map((a, i) => (
+                <div key={a.ref_code} className="flex items-center justify-between gap-2 text-xs border-b border-gray-50 pb-2 last:border-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-bold text-gray-400 w-4 shrink-0">{i + 1}</span>
+                    <div className="min-w-0">
+                      <p className="font-bold text-[#12182B] truncate">{a.ref_code}</p>
+                      <p className="text-[10px] text-gray-400">{a.orders} oda</p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-bold text-[#17A398]">{fmtTZS(a.revenue)}</p>
+                    <p className="text-[10px] text-gray-400">Comm: {fmtTZS(a.commission)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* MALIPO YA WASAMBAZAJI - admin anaweka kiasi alichomlipa kila
+            msambazaji; salio (commission - kilicholipwa) linaonekana hapa
+            NA kwenye dashboard ya msambazaji mwenyewe. */}
+        {!loading && topAffiliates.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5">
             <button
-              onClick={() => {
-                localStorage.removeItem("ishiki_affiliate_session");
-                setRefCode(null);
-                setAffiliate(null);
-                setOrders([]);
-                setTotalSales(0);
-                setTotalCommission(0);
-              }}
-              className="text-[10px] text-gray-400 hover:text-red-500 font-semibold underline whitespace-nowrap self-start"
+              onClick={() => setShowPayoutPanel((v) => !v)}
+              className="w-full flex items-center justify-between"
             >
-              Badilisha Akaunti
+              <p className="text-xs font-bold text-[#12182B]">💰 Malipo ya Wasambazaji (Commission Payouts)</p>
+              <span className="text-gray-400 text-xs">{showPayoutPanel ? "▲" : "▼"}</span>
             </button>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
-              <p className="text-xs text-gray-500 font-medium">Mauzo Yaliyofanyika</p>
-              <h3 className="text-2xl font-bold text-[#12182B] mt-2">
-                {orders.length} Oda
-              </h3>
-            </div>
-            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
-              <p className="text-xs text-gray-500 font-medium">Thamani ya Mauzo Yote</p>
-              <h3 className="text-2xl font-bold text-blue-600 mt-2">
-                {fmtTZS(totalSales)}
-              </h3>
-            </div>
-            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
-              <p className="text-xs text-gray-500 font-medium">Commission Yako</p>
-              <h3 className="text-2xl font-bold text-emerald-600 mt-2">
-                {fmtTZS(totalCommission)}
-              </h3>
-            </div>
-          </div>
-
-          {/* MALIPO - kiasi ulicholipwa na admin, na salio unalodai */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
-              <p className="text-xs text-gray-500 font-medium">Kiasi Ulicholipwa</p>
-              <h3 className="text-xl font-bold text-blue-600 mt-2">
-                {fmtTZS(affiliate?.total_paid || 0)}
-              </h3>
-            </div>
-            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
-              <p className="text-xs text-gray-500 font-medium">Unachodai (Salio)</p>
-              <h3 className={`text-xl font-bold mt-2 ${totalCommission - (affiliate?.total_paid || 0) > 0 ? "text-red-600" : "text-emerald-600"}`}>
-                {fmtTZS(Math.max(totalCommission - (affiliate?.total_paid || 0), 0))}
-              </h3>
-              {totalCommission - (affiliate?.total_paid || 0) <= 0 && totalCommission > 0 && (
-                <p className="text-[10px] text-emerald-600 mt-1">✓ Umelipwa Kamili</p>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-[#12182B] text-white p-5 sm:p-6 rounded-2xl">
-            <h3 className="text-sm font-semibold">Link Yako ya Kusambaza</h3>
-            <p className="text-xs text-gray-400 mt-1 mb-4">
-              Mtu akinunua kupitia link hii, commission inajipiga papo hapo kwenye akaunti yako.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <input
-                type="text"
-                readOnly
-                value={`${siteUrl}/?ref=${refCode}`}
-                className="bg-white/10 text-amber-300 text-xs font-mono px-4 py-3 rounded-xl flex-1 outline-none overflow-x-auto"
-              />
-              <button
-                onClick={copyLink}
-                className="bg-amber-400 text-black font-bold text-xs px-6 py-3 rounded-xl hover:bg-amber-500 transition"
-              >
-                {copied ? "Imenakiliwa!" : "Nakili Link"}
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-white border border-gray-200 p-5 sm:p-6 rounded-2xl shadow-sm">
-            <h3 className="font-bold text-base mb-3">Historia ya Mauzo & Commission</h3>
-            {orders.length === 0 ? (
-              <p className="text-xs text-gray-400 italic">
-                Bado hujapata mauzo kupitia link yako. Sambaza link uanze kupata commission!
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {orders.map((order) => {
-                  const comm = order.commission_total !== null && order.commission_total !== undefined
-                    ? Number(order.commission_total)
-                    : (Number(order.total) || 0) * FALLBACK_COMMISSION_RATE;
+            {showPayoutPanel && (
+              <div className="mt-3 space-y-3">
+                {topAffiliates.map((a) => {
+                  const info = affiliatesMap[a.ref_code] || {};
+                  const paid = Number(paidDrafts[a.ref_code] ?? info.total_paid ?? 0);
+                  const balance = a.commission - paid;
                   return (
-                    <div
-                      key={order.id}
-                      className="flex justify-between items-start p-3 border-b border-gray-100 text-xs gap-2"
-                    >
-                      <div>
-                        <p className="font-semibold text-gray-800">
-                          Oda #{order.id}
-                        </p>
-                        <p className="text-gray-400">
-                          {order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}
-                        </p>
-                        <span className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${paymentStatusColor(order.payment_status)}`}>
-                          {paymentStatusLabel(order.payment_status)}
-                        </span>
+                    <div key={a.ref_code} className="border border-gray-100 rounded-xl p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <p className="text-xs font-bold text-[#12182B]">{info.full_name || a.ref_code}</p>
+                          <p className="text-[10px] text-gray-400">{a.ref_code} • {info.phone || "—"}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] text-gray-400">Commission Jumla</p>
+                          <p className="text-xs font-bold text-[#17A398]">{fmtTZS(a.commission)}</p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-medium text-gray-600">
-                          Gharama: {fmtTZS(order.total)}
-                        </p>
-                        <p className="font-bold text-emerald-600">
-                          Com: +{fmtTZS(comm)}
-                        </p>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <label className="text-[10px] text-gray-400 block mb-0.5">Kiasi Alicholipwa (TZS)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={paidDrafts[a.ref_code] ?? info.total_paid ?? 0}
+                            onChange={(e) =>
+                              setPaidDrafts((prev) => ({ ...prev, [a.ref_code]: e.target.value }))
+                            }
+                            className="w-full px-2 py-1.5 border rounded-lg text-xs"
+                          />
+                        </div>
+                        <button
+                          onClick={() => handleSavePaid(a.ref_code)}
+                          disabled={savingPaidRefCode === a.ref_code}
+                          className="bg-[#12182B] hover:bg-[#1c2540] disabled:opacity-50 text-white text-[10px] font-bold px-3 py-2 rounded-lg transition-colors whitespace-nowrap self-end"
+                        >
+                          {savingPaidRefCode === a.ref_code ? "..." : "Hifadhi"}
+                        </button>
                       </div>
+
+                      <p className={`text-xs font-bold mt-2 ${balance > 0 ? "text-red-600" : "text-green-600"}`}>
+                        {balance > 0 ? `Anadai: ${fmtTZS(balance)}` : balance < 0 ? `Umelipa Zaidi: ${fmtTZS(Math.abs(balance))}` : "Amelipwa Kamili ✓"}
+                      </p>
                     </div>
                   );
                 })}
               </div>
             )}
           </div>
+        )}
+
+        {/* BIDHAA ZILIZOUZWA - admin anaweza kubadilisha idadi mwenyewe, au
+            kukokotoa kiotomatiki kutoka oda halisi zilizopakiwa juu. */}
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5">
+          <button
+            onClick={() => setShowSoldPanel((v) => !v)}
+            className="w-full flex items-center justify-between"
+          >
+            <p className="text-xs font-bold text-[#12182B]">🔥 Bidhaa Zilizouzwa (Sold Count)</p>
+            <span className="text-gray-400 text-xs">{showSoldPanel ? "▲" : "▼"}</span>
+          </button>
+
+          {showSoldPanel && (
+            <div className="mt-3">
+              <button
+                onClick={handleRecalculateFromOrders}
+                disabled={recalculating}
+                className="w-full mb-3 bg-[#12182B] hover:bg-[#1c2540] disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl transition-colors"
+              >
+                {recalculating ? "Inakokotoa..." : "🔄 Kokotoa Kiotomatiki Kutoka Oda Halisi"}
+              </button>
+              <p className="text-[10px] text-gray-400 mb-3">
+                Hii inachambua "items" za oda zote (jina la bidhaa linalofanana) na kujaza idadi halisi.
+                Unaweza pia kubadilisha namba yoyote mwenyewe hapa chini (mfano kwa ajili ya masoko).
+              </p>
+
+              {productsLoading ? (
+                <p className="text-xs text-gray-400 text-center py-4">Inapakia bidhaa...</p>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                  {products.map((p) => (
+                    <div key={p.id} className="flex items-center gap-2 border-b border-gray-50 pb-2 last:border-0">
+                      <p className="text-xs text-gray-700 flex-1 truncate">{p.name}</p>
+                      <input
+                        type="number"
+                        min="0"
+                        value={soldCountDrafts[p.id] ?? 0}
+                        onChange={(e) =>
+                          setSoldCountDrafts((prev) => ({ ...prev, [p.id]: e.target.value }))
+                        }
+                        className="w-20 px-2 py-1.5 border rounded-lg text-xs text-center"
+                      />
+                      <button
+                        onClick={() => handleSaveSoldCount(p.id)}
+                        disabled={savingProductId === p.id}
+                        className="bg-[#17A398] hover:bg-[#13847b] disabled:opacity-50 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        {savingProductId === p.id ? "..." : "Hifadhi"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* SEARCH & FILTER */}
+        <div className="flex flex-col sm:flex-row gap-2 mb-4">
+          <input
+            type="text"
+            placeholder="Tafuta kwa jina, namba ya simu, au ID..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="flex-1 px-3 py-2 border rounded-xl text-xs bg-white focus:outline-none focus:border-[#17A398]"
+          />
+          <button
+            onClick={loadOrders}
+            className="bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors whitespace-nowrap"
+          >
+            🔄 Sasisha
+          </button>
+        </div>
+
+        <div className="flex gap-2 flex-wrap mb-5">
+          <button
+            onClick={() => setStatusFilter("wote")}
+            className={`px-3 py-1.5 rounded-full text-[11px] font-semibold ${
+              statusFilter === "wote" ? "bg-[#12182B] text-white" : "bg-white text-gray-600 border border-gray-200"
+            }`}
+          >
+            Zote ({orders.length})
+          </button>
+          {STATUS_OPTIONS.map((s) => {
+            const count = orders.filter((o) => (o.status || "pending") === s.value).length;
+            return (
+              <button
+                key={s.value}
+                onClick={() => setStatusFilter(s.value)}
+                className={`px-3 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap ${
+                  statusFilter === s.value ? "bg-[#12182B] text-white" : "bg-white text-gray-600 border border-gray-200"
+                }`}
+              >
+                {s.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+
+        {loading ? (
+          <p className="text-xs text-gray-500 text-center py-10">Inapakia oda...</p>
+        ) : loadError ? (
+          <p className="text-xs text-red-500 text-center py-10">{loadError}</p>
+        ) : filteredOrders.length === 0 ? (
+          <p className="text-xs text-gray-500 text-center py-10">Hakuna oda zinazofanana na utafutaji huu.</p>
+        ) : (
+          <div className="space-y-3">
+            {filteredOrders.map((order) => {
+              const items = parseItems(order.items);
+              const isExpanded = expandedId === order.id;
+              return (
+                <div key={order.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-sm">Oda #{order.id}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${statusColor(order.status)}`}>
+                          {statusLabel(order.status)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {order.customer_name || "Bila Jina"} • {order.customer_phone || "—"}
+                      </p>
+                      <p className="text-xs text-gray-500">📍 {order.region || "—"}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-extrabold text-[#17A398] text-sm">{fmtTZS(order.total)}</p>
+                      {order.ref_code && (
+                        <p className="text-[10px] text-gray-400">Ref: {order.ref_code}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : order.id)}
+                    className="text-[11px] text-[#17A398] font-semibold mt-2 underline"
+                  >
+                    {isExpanded ? "Ficha maelezo" : "Ona bidhaa & maelezo zaidi"}
+                  </button>
+
+                  {isExpanded && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 text-xs space-y-2">
+                      {items.length > 0 && (
+                        <div>
+                          <p className="font-bold text-gray-700 mb-1">Bidhaa:</p>
+                          {items.map((it, i) => (
+                            <p key={i} className="text-gray-600">
+                              • {it.name} {it.size ? `(Size: ${it.size})` : ""} {it.color ? `(Rangi: ${it.color})` : ""} {it.type ? `(${it.type})` : ""} — {it.qty} x {fmtTZS(it.price)}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600">
+                        <span>Bei ya Bidhaa:</span>
+                        <span className="text-right">{fmtTZS(order.subtotal)}</span>
+                        <span>Usafiri:</span>
+                        <span className="text-right">{fmtTZS(order.shipping_fee)}</span>
+                        <span className="font-bold text-[#12182B]">Jumla:</span>
+                        <span className="text-right font-bold text-[#12182B]">{fmtTZS(order.total)}</span>
+                        {order.ref_code && (
+                          <>
+                            <span>Commission:</span>
+                            <span className="text-right">{fmtTZS(order.commission_total)}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                      Badilisha Status (Usafirishaji):
+                    </label>
+                    <select
+                      value={order.status || "pending"}
+                      onChange={(e) => handleStatusChange(order.id, e.target.value)}
+                      disabled={updatingId === order.id}
+                      className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
+                    >
+                      {STATUS_OPTIONS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-2">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                      Hali ya Malipo:
+                    </label>
+                    <select
+                      value={order.payment_status || "hajalipa"}
+                      onChange={(e) => handlePaymentStatusChange(order.id, e.target.value)}
+                      disabled={updatingId === `pay-${order.id}`}
+                      className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
+                    >
+                      {PAYMENT_STATUS_OPTIONS.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={`inline-block mt-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${paymentStatusColor(order.payment_status)}`}>
+                      {paymentStatusLabel(order.payment_status)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                    {order.customer_phone && (
+                      <a
+                        href={`https://wa.me/255${order.customer_phone.replace(/^0/, "")}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-center bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold py-2 rounded-xl transition-colors"
+                      >
+                        💬 Mteja WhatsApp
+                      </a>
+                    )}
+                    {order.ref_code && affiliatesMap[order.ref_code]?.phone && (
+                      <a
+                        href={`https://wa.me/255${affiliatesMap[order.ref_code].phone.replace(/^0/, "")}?text=${encodeURIComponent(
+                          `Habari ${affiliatesMap[order.ref_code].full_name || "Msambazaji"}, kuhusu Oda #${order.id}: hali ya malipo ni "${paymentStatusLabel(order.payment_status).replace(/[^\w\s()]/g, "").trim()}".`
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-center bg-[#12182B] hover:bg-[#1c2540] text-white text-xs font-bold py-2 rounded-xl transition-colors"
+                      >
+                        💬 Msambazaji WhatsApp
+                      </a>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => downloadReceipt(orderToReceiptShape(order))}
+                    className="w-full mt-2 bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] text-xs font-bold py-2 rounded-xl transition-colors"
+                  >
+                    📥 Pakua Risiti (Admin Copy)
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </main>
   );

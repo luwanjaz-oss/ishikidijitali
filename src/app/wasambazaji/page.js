@@ -377,6 +377,25 @@ export default function WasambajiPage() {
             </div>
           </div>
 
+          {/* MALIPO - kiasi ulicholipwa na admin, na salio unalodai */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
+              <p className="text-xs text-gray-500 font-medium">Kiasi Ulicholipwa</p>
+              <h3 className="text-xl font-bold text-blue-600 mt-2">
+                {fmtTZS(affiliate?.total_paid || 0)}
+              </h3>
+            </div>
+            <div className="bg-white border border-gray-200 p-5 rounded-2xl shadow-sm">
+              <p className="text-xs text-gray-500 font-medium">Unachodai (Salio)</p>
+              <h3 className={`text-xl font-bold mt-2 ${totalCommission - (affiliate?.total_paid || 0) > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                {fmtTZS(Math.max(totalCommission - (affiliate?.total_paid || 0), 0))}
+              </h3>
+              {totalCommission - (affiliate?.total_paid || 0) <= 0 && totalCommission > 0 && (
+                <p className="text-[10px] text-emerald-600 mt-1">✓ Umelipwa Kamili</p>
+              )}
+            </div>
+          </div>
+
           <div className="bg-[#12182B] text-white p-5 sm:p-6 rounded-2xl">
             <h3 className="text-sm font-semibold">Link Yako ya Kusambaza</h3>
             <p className="text-xs text-gray-400 mt-1 mb-4">
