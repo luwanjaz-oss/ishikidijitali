@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { supabase } from "../lib/supabaseClient";
-import { useCart } from "../context/CartContext";
-import { downloadReceipt } from "../lib/receipt";
+import { supabase } from "@/lib/supabaseClient";
+import { useCart } from "@/context/CartContext";
+import { downloadReceipt } from "@/lib/receipt";
 
 const WHATSAPP_NUMBER = "255754282086";
 const LIPA_NAMBA = "58176639";
@@ -29,18 +29,6 @@ function getProductCommissionRate(item) {
 }
 
 // MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb).
-// Kila kipengele kinaweza kuwa NENO TU (mfano "Nyeusi"), AU OBJECT yenye
-// picha na/au bei yake maalum, mfano:
-// {
-//   "colors": [
-//     {"name": "Green", "image": "https://...", "price": 12600},
-//     {"name": "Silver", "image": "https://...", "price": 13000},
-//     "Blue"
-//   ],
-//   "sizes": ["S", "M", "L"],
-//   "types": ["220V", "Battery"]
-// }
-// "image" na "price" ni HIARI - ukiacha, itatumia picha/bei ya kawaida ya bidhaa.
 function normalizeVariantList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -69,9 +57,6 @@ function getProductVariants(p) {
       return { sizes: [], colors: [], types: [], options: {} };
     }
   }
-  // "options" ni MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity,
-  // n.k) - kwa bidhaa ambazo hazifai kwenye sizes/colors/types za kawaida.
-  // Muundo: { "Uwezo (Watts)": [{"name":"200W10Ah","price":79000}, ...] }
   const options = {};
   if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
     Object.entries(v.options).forEach(([label, arr]) => {
@@ -102,7 +87,6 @@ const TRANSPORT_ROUTES = [
   { flag: "🚌", name: "Kariakoo → Mikoani Kote", days: "Siku 1 (Mabasi / Express)", progress: "98%" },
 ];
 
-// FURSA ZA ISHI KIDIJITALI - inaonyesha kwa mzunguko (animation) kwenye Hero
 const FURSA_ZA_ISHIKI = [
   { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
   { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
@@ -111,12 +95,6 @@ const FURSA_ZA_ISHIKI = [
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
 
-// BILLBOARD YA CHAPA - LVR (Built Different). "Slides" zinabadilika kwa
-// zamu - picha (na "Order Now" tu juu yake) na slide YA MANENO peke yake
-// (background nyeusi, maneno makubwa yanayosomeka vizuri, Kiingereza +
-// tafsiri ya Kiswahili). Hii inaepuka tatizo la maneno kupotea juu ya picha.
-// TAHADHARI: link za picha ni "signed URLs" zenye tarehe ya mwisho (~mwaka 1) -
-// baada ya hapo zitahitaji kusasishwa, au fanya bucket iwe Public kwa link za kudumu.
 const LVR_BILLBOARD_SLIDES = [
   {
     type: "image",
@@ -158,7 +136,6 @@ const CATEGORIES = [
 
 const SERVICE_CENTER_NUMBER = "0754282086";
 
-// MASWALI NA MAJIBU (FAQ) - inaonekana chini ya tovuti kabla ya footer
 const FAQ_ITEMS = [
   {
     q: "Ishi Kidijitali inafanya kazi vipi?",
@@ -199,10 +176,6 @@ function getProductImages(p) {
   return p.image_url.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-// TRACKING ANIMATION - inatafsiri "status" ya oda kuwa asilimia ya safari
-// (kwa ajili ya animation), na kuamua ikoni (✈️ ndege / 🚢 meli / 🚌 basi)
-// kwa kuangalia "origin" ya bidhaa zilizoagizwa. Hatua zinajumuisha: Nchi ya
-// Asili -> Njia ya Usafiri -> Forodha/Import Duties DSM -> Mkoa la Mteja.
 const STATUS_PROGRESS = {
   pending: 5,
   inasindikwa: 15,
@@ -213,7 +186,6 @@ const STATUS_PROGRESS = {
   inasafirishwa_mkoani: 90,
   delivered: 100,
   cancelled: 0,
-  // Majina ya zamani (backward-compatible, kama oda za awali bado zinayo)
   inasafirishwa: 55,
   imefika_mkoani: 90,
 };
@@ -244,7 +216,6 @@ function getOrderJourney(order, products) {
   const icon = isInternational ? (/china/i.test(origin) ? "🚢" : "✈️") : "🚌";
   const progress = STATUS_PROGRESS[order.status] ?? STATUS_PROGRESS.pending;
 
-  // Vituo (checkpoints) vinavyoonekana kwenye mstari wa safari
   const checkpoints = isInternational
     ? [
         { label: origin, at: 0 },
@@ -291,7 +262,6 @@ export default function Home() {
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedColor, setSelectedColor] = useState("");
   const [selectedType, setSelectedType] = useState("");
-  // Machaguo ya jina lolote (Watts, Battery, Units n.k) - { [label]: jina_lililochaguliwa }
   const [selectedOptions, setSelectedOptions] = useState({});
   const [modalGalleryIdx, setModalGalleryIdx] = useState(0);
 
@@ -301,13 +271,8 @@ export default function Home() {
   const [category, setCategory] = useState("wote");
   const [openFaqIdx, setOpenFaqIdx] = useState(0);
 
-  // JUST ADDED bidhaa kikapuni - inaonyesha chaguo "Endelea Kununua" au
-  // "Nenda Kikapuni" badala ya kufunga modal moja kwa moja (watu walikuwa
-  // wanachanganyikiwa wakidhani oda imekamilika).
   const [justAddedToCart, setJustAddedToCart] = useState(false);
 
-  // SWIPE - kwa picha za bidhaa (modal na billboard) - mteja anavuta
-  // (swipe) kubadilisha picha, siyo kubofya thumbnail moja baada ya moja.
   const swipeStartX = useRef(null);
   function handleSwipeStart(e) {
     swipeStartX.current = e.touches ? e.touches[0].clientX : e.clientX;
@@ -323,7 +288,6 @@ export default function Home() {
     swipeStartX.current = null;
   }
 
-  // TRACKING - inatafuta oda halisi kwenye Supabase kwa namba ya simu
   const [trackingInput, setTrackingInput] = useState("");
   const [trackingResults, setTrackingResults] = useState(null);
   const [trackingError, setTrackingError] = useState("");
@@ -332,7 +296,6 @@ export default function Home() {
   const [activeRefCode, setActiveRefCode] = useState("");
 
   const [checkoutStatus, setCheckoutStatus] = useState("idle");
-  // Taarifa za oda ya mwisho - kwa ajili ya RISITI (receipt) inayopakuliwa.
   const [lastOrder, setLastOrder] = useState(null);
 
   useEffect(() => {
@@ -343,8 +306,6 @@ export default function Home() {
         setActiveRefCode(ref);
         localStorage.setItem("ishiki_ref_code", ref);
       }
-      // Kutoka ukurasa wa bidhaa: "Nenda Kikapuni" inaongoza hapa na ?cart=1,
-      // hii inafungua drawer ya kikapu moja kwa moja.
       if (params.get("cart") === "1") {
         setShowCartDrawer(true);
       }
@@ -404,11 +365,9 @@ export default function Home() {
     const sizeObj = sizes.find((s) => s.name === selectedSize);
     const colorObj = colors.find((c) => c.name === selectedColor);
     const typeObj = types.find((t) => t.name === selectedType);
-    // Machaguo ya jina lolote (Watts/Battery/Units n.k) yaliyochaguliwa
     const selectedOptionObjs = Object.entries(options).map(([label, list]) =>
       list.find((o) => o.name === selectedOptions[label])
     );
-    // Bei ya mwisho: machaguo maalum (options) > rangi > aina > size > bei ya kawaida
     const candidates = [...selectedOptionObjs, colorObj, typeObj, sizeObj];
     const effectivePrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? selectedProduct.price;
     const effectiveImage = candidates.find((c) => c?.image)?.image ?? null;
@@ -427,8 +386,6 @@ export default function Home() {
       qty: 1,
     };
     if (addToCart) addToCart(itemWithOptions);
-    // Badala ya kufunga modal moja kwa moja, mwoneshe mteja chaguo:
-    // "Endelea Kununua" au "Nenda Kikapuni" - watu walikuwa wanachanganyikiwa.
     setJustAddedToCart(true);
   };
 
@@ -465,7 +422,6 @@ export default function Home() {
 
     setCheckoutStatus("submitting");
 
-    // SUBTOTAL - jumla ya bei za bidhaa peke yake (bila usafiri)
     let subtotal = 0;
     let totalCommission = 0;
     cart.forEach((item) => {
@@ -476,9 +432,6 @@ export default function Home() {
       }
     });
 
-    // SHIPPING FEE - kwa sasa ni jumla rahisi ya shipping_fee x idadi ya kila
-    // bidhaa. TAHADHARI: hii bado HAIZINGATII CBM (meli) wala tofauti ya
-    // uzito kwa ndege - itahitaji muundo zaidi baadaye (bado tunajadiliana).
     let shippingFee = 0;
     cart.forEach((item) => {
       const perUnitShipping = Number(item.shipping_fee) || 0;
@@ -487,7 +440,6 @@ export default function Home() {
 
     const total = subtotal + shippingFee;
 
-    // ITEMS - orodha ya bidhaa (JSON text) inayohifadhiwa kwenye kolamu "items"
     const itemsSummary = JSON.stringify(
       cart.map((item) => ({
         name: item.name,
@@ -531,12 +483,9 @@ export default function Home() {
 
     if (orderInsertError) {
       console.error("Supabase order error:", orderInsertError);
-      // Tunamwonya mtumiaji badala ya kuficha kimya kimya - hii inasaidia
-      // kubaini haraka ikiwa jina la kolamu halifanani na Supabase.
       alert("Kuna tatizo la kuhifadhi oda Supabase (ingawa WhatsApp itafunguka). Tafadhali mwambie msimamizi: " + (orderInsertError.message || "unknown error"));
     }
 
-    // Hifadhi maelezo ya oda hii kwa ajili ya RISITI inayopakuliwa baadaye.
     setLastOrder({
       id: insertedOrder?.id || null,
       date: insertedOrder?.created_at || new Date().toISOString(),
@@ -600,8 +549,6 @@ export default function Home() {
     setCustomerAddress("");
   };
 
-  // TRACKING - Inatafuta oda za kweli kwenye Supabase kwa namba ya simu
-  // (au ID ya oda kama mteja anaifahamu).
   const handleTrackOrder = async (e) => {
     e.preventDefault();
     const query = trackingInput.trim();
@@ -745,7 +692,6 @@ export default function Home() {
               </Link>
             </div>
 
-            {/* FURSA ZA ISHI KIDIJITALI - INAZUNGUKA (ANIMATION) */}
             <div className="mt-6 bg-white/5 border border-white/10 rounded-2xl p-4 max-w-sm overflow-hidden">
               <span className="text-[10px] font-bold text-[#E8A93B] uppercase tracking-wider">
                 Fursa Zilizopo Ishi Kidijitali
@@ -856,7 +802,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* BILLBOARD - LVR (BUILT DIFFERENT) */}
+      {/* BILLBOARD - LVR */}
       <section className="relative w-full h-[420px] sm:h-[480px] overflow-hidden bg-[#12182B]">
         {LVR_BILLBOARD_SLIDES.map((slide, i) => {
           const isActive = i === billboardIdx;
@@ -879,7 +825,6 @@ export default function Home() {
               </div>
             );
           }
-          // TEXT SLIDE - background nzito, maneno makubwa yanayosomeka vizuri
           return (
             <div
               key={i}
@@ -1109,7 +1054,7 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* PRODUCT VARIATION MODAL - inasoma "variants" JSON kutoka Supabase */}
+      {/* PRODUCT VARIATION MODAL */}
       {selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1243,7 +1188,6 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* MACHAGUO YA JINA LOLOTE (Watts, Battery, Units, Capacity n.k) */}
                 {Object.entries(modalVariants.options).map(([label, list]) => (
                   <div key={label} className="mb-4">
                     <label className="text-xs font-bold block mb-1">Chagua {label}:</label>
@@ -1275,7 +1219,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* TRACKING MODAL - INATAFUTA ODA HALISI KWENYE SUPABASE */}
+      {/* TRACKING MODAL */}
       {showTrackingModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto">
@@ -1323,7 +1267,6 @@ export default function Home() {
                         {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
                       </p>
 
-                      {/* ANIMATION YA USAFIRI - inasogea kulingana na status */}
                       {!journey.isCancelled && (
                         <div className="mt-2 pt-2 border-t border-black/5">
                           <div className="flex justify-between text-[8px] text-gray-500 font-semibold mb-2">
