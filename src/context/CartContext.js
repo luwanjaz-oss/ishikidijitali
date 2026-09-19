@@ -9,11 +9,18 @@ const CartContext = createContext();
 // kikapuni, lakini bidhaa isiyo na machaguo yoyote inabaki kitu kimoja tu.
 function buildCartItemId(product) {
   if (product.cartItemId) return product.cartItemId;
+  const optionsKey = product.selectedOptions
+    ? Object.entries(product.selectedOptions)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([label, val]) => `${label}:${val}`)
+        .join("|")
+    : "";
   const parts = [
     product.id,
     product.selectedSize || "",
     product.selectedColor || "",
     product.selectedType || "",
+    optionsKey,
   ];
   return parts.join("-");
 }

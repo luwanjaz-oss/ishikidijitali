@@ -4,9 +4,6 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { downloadReceipt } from "@/lib/receipt";
 
-// TAHADHARI: Hii ni ulinzi rahisi (password moja) kwa matumizi ya ndani tu.
-// Usishiriki link hii ya /admin hadharani. Ukitaka ubadilishe password,
-// badilisha thamani hii tu.
 const ADMIN_PASSWORD = "ishiki2026";
 
 const STATUS_OPTIONS = [
@@ -83,8 +80,6 @@ function parseItems(itemsRaw) {
   }
 }
 
-// Inabadilisha "order" iliyopakiwa kutoka Supabase kuwa muundo unaotakiwa
-// na downloadReceipt() (ile ile inayotumika mara baada ya checkout).
 function orderToReceiptShape(order) {
   const items = parseItems(order.items).map((it) => ({
     name: it.name,
@@ -123,21 +118,31 @@ export default function AdminPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedId, setExpandedId] = useState(null);
 
-  // Simu za wasambazaji (ref_code -> phone/full_name), inatumika kutuma
-  // WhatsApp haraka bila kuingia jedwali la affiliates kila wakati.
   const [affiliatesMap, setAffiliatesMap] = useState({});
   const [paidDrafts, setPaidDrafts] = useState({});
   const [savingPaidRefCode, setSavingPaidRefCode] = useState(null);
   const [showPayoutPanel, setShowPayoutPanel] = useState(false);
 
-  // "Bidhaa Zilizouzwa" - orodha ya products na sold_count yake, admin
-  // anaweza kubadilisha mwenyewe au kukokotoa kiotomatiki kutoka oda halisi.
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [savingProductId, setSavingProductId] = useState(null);
   const [soldCountDrafts, setSoldCountDrafts] = useState({});
   const [recalculating, setRecalculating] = useState(false);
   const [showSoldPanel, setShowSoldPanel] = useState(false);
+
+  // PRODUCT & VARIANT BUILDER STATES
+  const [showProductManager, setShowProductManager] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [prodName, setProdName] = useState("");
+  const [prodPrice, setProdPrice] = useState("");
+  const [prodCategory, setProdCategory] = useState("elektroniki");
+  const [prodOrigin, setProdOrigin] = useState("China");
+  const [prodImage, setProdImage] = useState("");
+  const [prodDesc, setProdDesc] = useState("");
+  const [variantOptions, setVariantOptions] = useState([
+    { label: "Uwezo / Watts", list: [{ name: "500W", price: "" }, { name: "800W", price: "" }] }
+  ]);
+  const [savingProduct, setSavingProduct] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -151,7 +156,6 @@ export default function AdminPage() {
     loadOrders();
     loadAffiliates();
     loadProducts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authenticated]);
 
   async function loadAffiliates() {
@@ -196,7 +200,7 @@ export default function AdminPage() {
   async function loadProducts() {
     setProductsLoading(true);
     try {
-      const { data, error } = await supabase.from("products").select("id, name, sold_count").order("id", { ascending: true });
+      const { data, error } = await supabase.from("products").select("*").order("id", { ascending: true });
       if (error) throw error;
       setProducts(data || []);
       const drafts = {};
@@ -210,6 +214,90 @@ export default function AdminPage() {
       setProductsLoading(false);
     }
   }
+
+  // EDITS / ADDS PRODUCTS & VARIANTS
+  const handleEditProductClick = (p) => {
+    setEditingProduct(p);
+    setProdName(p.name || "");
+    setProdPrice(p.price || "");
+    setProdCategory(p.category || "elektroniki");
+    setProdOrigin(p.origin || "China");
+    setProdImage(p.image_url || "");
+    setProdDesc(p.description || "");
+
+    let parsedVariants = { options: {} };
+    if (p.variants) {
+      try {
+        parsedVariants = typeof p.variants === "string" ? JSON.parse(p.variants) : p.variants;
+      } catch {}
+    }
+
+    if (parsedVariants.options && Object.keys(parsedVariants.options).length > 0) {
+      const opts = Object.entries(parsedVariants.options).map(([label, list]) => ({
+        label,
+        list: Array.isArray(list) ? list.map(v => typeof v === 'string' ? { name: v, price: "" } : v) : []
+      }));
+      setVariantOptions(opts);
+    } else {
+      setVariantOptions([]);
+    }
+  };
+
+  const handleAddOptionGroup = () => {
+    setVariantOptions([...variantOptions, { label: "Option Mpya (mf. Voltage)", list: [{ name: "Value 1", price: "" }] }]);
+  };
+
+  const handleAddValueToGroup = (groupIndex) => {
+    const updated = [...variantOptions];
+    updated[groupIndex].list.push({ name: "", price: "" });
+    setVariantOptions(updated);
+  };
+
+  const handleSaveProductComplete = async (e) => {
+    e.preventDefault();
+    setSavingProduct(true);
+
+    const optionsObj = {};
+    variantOptions.forEach((opt) => {
+      if (opt.label && opt.list.length > 0) {
+        optionsObj[opt.label] = opt.list.filter(item => item.name.trim() !== "").map(item => ({
+          name: item.name,
+          price: item.price !== "" && item.price !== null ? Number(item.price) : null
+        }));
+      }
+    });
+
+    const variantsJSON = { options: optionsObj };
+
+    const payload = {
+      name: prodName,
+      price: Number(prodPrice),
+      category: prodCategory,
+      origin: prodOrigin,
+      image_url: prodImage,
+      description: prodDesc,
+      variants: JSON.stringify(variantsJSON),
+    };
+
+    try {
+      if (editingProduct) {
+        const { error } = await supabase.from("products").update(payload).eq("id", editingProduct.id);
+        if (error) throw error;
+        alert("Bidhaa imesahihishwa kikamilifu!");
+      } else {
+        const { error } = await supabase.from("products").insert([payload]);
+        if (error) throw error;
+        alert("Bidhaa mpya imeongezwa kikamilifu!");
+      }
+      setEditingProduct(null);
+      loadProducts();
+    } catch (err) {
+      console.error("Save product error:", err);
+      alert("Kosa: " + err.message);
+    } finally {
+      setSavingProduct(false);
+    }
+  };
 
   async function handleSaveSoldCount(productId) {
     setSavingProductId(productId);
@@ -226,8 +314,6 @@ export default function AdminPage() {
     }
   }
 
-  // Inakokotoa jumla ya idadi ya kila bidhaa iliyouzwa kwa kuchambua
-  // "items" za oda ZOTE (kwa jina la bidhaa), kisha kuhifadhi Supabase.
   async function handleRecalculateFromOrders() {
     setRecalculating(true);
     try {
@@ -260,8 +346,6 @@ export default function AdminPage() {
     }
   }
 
-  // NOTIFICATION - inatuma notification ya browser + sauti kila mara oda
-  // mpya inapoingia, wakati dashboard hii iko wazi (real-time kupitia Supabase).
   useEffect(() => {
     if (!authenticated) return;
 
@@ -276,21 +360,16 @@ export default function AdminPage() {
         { event: "INSERT", schema: "public", table: "orders" },
         (payload) => {
           const newOrder = payload.new;
-
-          // Sauti ya arifa
           try {
             const audio = new Audio("https://actions.google.com/sounds/v1/alarms/beep_short.ogg");
             audio.play().catch(() => {});
           } catch {}
 
-          // Notification ya browser (ikiwa ruhusa imetolewa)
           if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
             new Notification("📦 Oda Mpya - Ishi Kidijitali", {
               body: `${newOrder.customer_name || "Mteja"} - ${newOrder.customer_phone || ""}`,
             });
           }
-
-          // Ongeza oda mpya juu ya orodha bila kureload
           setOrders((prev) => [newOrder, ...prev]);
         }
       )
@@ -359,9 +438,6 @@ export default function AdminPage() {
     }
   }
 
-  // Hali ya MALIPO (siyo usafirishaji) - inaonekana moja kwa moja kwenye
-  // dashboard ya msambazaji, ili aelewe kama mteja wake amelipa, atalipa
-  // mzigo ukifika, amelipa kidogo, au bado hajalipa kabisa.
   async function handlePaymentStatusChange(orderId, newPaymentStatus) {
     setUpdatingId(`pay-${orderId}`);
     try {
@@ -392,8 +468,6 @@ export default function AdminPage() {
     return matchesStatus && matchesSearch;
   });
 
-  // MUHTASARI WA JUMLA - Wasambazaji/link zilizoongoza kwa mauzo, na jumla
-  // ya bidhaa zilizouzwa (zinatokana na "orders" tulizoshapakia juu).
   const totalRevenue = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const totalOrders = orders.length;
   const totalItemsSold = orders.reduce((sum, o) => sum + parseItems(o.items).reduce((s, it) => s + (it.qty || 1), 0), 0);
@@ -447,7 +521,7 @@ export default function AdminPage() {
       <header className="sticky top-0 z-50 bg-[#12182B] border-b border-white/10 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="bg-[#E5383B] text-white text-xs font-bold px-2 py-1 rounded">Ishi</span>
-          <span className="text-white font-bold text-sm">Admin - Oda</span>
+          <span className="text-white font-bold text-sm">Admin Dashboard</span>
         </div>
         <button
           onClick={handleLogout}
@@ -458,14 +532,213 @@ export default function AdminPage() {
       </header>
 
       <section className="max-w-4xl mx-auto px-4 py-5">
-        {typeof window !== "undefined" && "Notification" in window && Notification.permission !== "granted" && (
+        {/* MANAGEMENT PANELS TOGGLE */}
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5 shadow-sm">
           <button
-            onClick={() => Notification.requestPermission()}
-            className="w-full mb-4 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold px-4 py-2.5 rounded-xl text-left"
+            onClick={() => setShowProductManager((v) => !v)}
+            className="w-full flex items-center justify-between"
           >
-            🔔 Bonyeza hapa kuwasha notification ya oda mpya (browser)
+            <p className="text-xs font-bold text-[#12182B] flex items-center gap-2">
+              <span>🛠️</span> Simamia Bidhaa & Machaguo (Variants Builder)
+            </p>
+            <span className="text-gray-400 text-xs">{showProductManager ? "▲" : "▼"}</span>
           </button>
-        )}
+
+          {showProductManager && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <form onSubmit={handleSaveProductComplete} className="space-y-3 bg-[#F7F9FC] p-4 rounded-xl border border-gray-200">
+                <h4 className="text-xs font-extrabold text-[#12182B] uppercase">
+                  {editingProduct ? `Edit Bidhaa: ${editingProduct.name}` : "➕ Ongeza Bidhaa Mpya"}
+                </h4>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold block mb-1">Jina la Bidhaa:</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="mf. Portable Power Station"
+                      value={prodName}
+                      onChange={(e) => setProdName(e.target.value)}
+                      className="w-full px-2 py-1.5 border rounded-lg text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold block mb-1">Bei ya Kawaida (TZS):</label>
+                    <input
+                      type="number"
+                      required
+                      placeholder="335000"
+                      value={prodPrice}
+                      onChange={(e) => setProdPrice(e.target.value)}
+                      className="w-full px-2 py-1.5 border rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold block mb-1">Category:</label>
+                    <select
+                      value={prodCategory}
+                      onChange={(e) => setProdCategory(e.target.value)}
+                      className="w-full px-2 py-1.5 border rounded-lg text-xs bg-white"
+                    >
+                      <option value="elektroniki">Elektroniki</option>
+                      <option value="vitu_vyote">Zana & Mashine</option>
+                      <option value="fashion">Mavazi & Viatu</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold block mb-1">Origin (Inakotoka):</label>
+                    <input
+                      type="text"
+                      placeholder="China / DSM / USA"
+                      value={prodOrigin}
+                      onChange={(e) => setProdOrigin(e.target.value)}
+                      className="w-full px-2 py-1.5 border rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold block mb-1">Link ya Picha (Image URL):</label>
+                  <input
+                    type="text"
+                    placeholder="https://..."
+                    value={prodImage}
+                    onChange={(e) => setProdImage(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold block mb-1">Maelezo ya Bidhaa (Description):</label>
+                  <textarea
+                    rows={2}
+                    placeholder="Maelezo fupi ya bidhaa..."
+                    value={prodDesc}
+                    onChange={(e) => setProdDesc(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded-lg text-xs"
+                  />
+                </div>
+
+                {/* VARIANT BUILDER */}
+                <div className="pt-2 border-t border-gray-200">
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-[11px] font-extrabold text-[#17A398]">
+                      ⚡ Machaguo ya Bidhaa (Watts / Volts / Color / Size):
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleAddOptionGroup}
+                      className="bg-[#12182B] text-white text-[10px] font-bold px-2 py-1 rounded"
+                    >
+                      + Group Mpya
+                    </button>
+                  </div>
+
+                  {variantOptions.map((group, groupIdx) => (
+                    <div key={groupIdx} className="bg-white p-3 rounded-lg border border-gray-200 mb-2 space-y-2">
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          placeholder="Jina la Group (mf. Uwezo au Volts)"
+                          value={group.label}
+                          onChange={(e) => {
+                            const updated = [...variantOptions];
+                            updated[groupIdx].label = e.target.value;
+                            setVariantOptions(updated);
+                          }}
+                          className="flex-1 px-2 py-1 border rounded text-xs font-bold text-[#17A398]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVariantOptions(variantOptions.filter((_, i) => i !== groupIdx));
+                          }}
+                          className="text-red-500 font-bold text-xs"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      {group.list.map((item, itemIdx) => (
+                        <div key={itemIdx} className="flex gap-2 items-center pl-2">
+                          <input
+                            type="text"
+                            placeholder="Option (mf. 500W au 800W)"
+                            value={item.name}
+                            onChange={(e) => {
+                              const updated = [...variantOptions];
+                              updated[groupIdx].list[itemIdx].name = e.target.value;
+                              setVariantOptions(updated);
+                            }}
+                            className="flex-1 px-2 py-1 border rounded text-xs"
+                          />
+                          <input
+                            type="number"
+                            placeholder="Bei Maalum (Hiari)"
+                            value={item.price || ""}
+                            onChange={(e) => {
+                              const updated = [...variantOptions];
+                              updated[groupIdx].list[itemIdx].price = e.target.value;
+                              setVariantOptions(updated);
+                            }}
+                            className="w-28 px-2 py-1 border rounded text-xs"
+                          />
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={() => handleAddValueToGroup(groupIdx)}
+                        className="text-[10px] text-[#17A398] font-bold underline pl-2 block"
+                      >
+                        + Ongeza Kipengele
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    disabled={savingProduct}
+                    className="flex-1 bg-[#17A398] hover:bg-[#13847b] text-white font-bold py-2 rounded-lg text-xs"
+                  >
+                    {savingProduct ? "Inahifadhi..." : editingProduct ? "Hifadhi Mabadiliko" : "Ongeza Bidhaa"}
+                  </button>
+                  {editingProduct && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingProduct(null)}
+                      className="bg-gray-300 text-black font-bold px-3 py-2 rounded-lg text-xs"
+                    >
+                      Acha
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              {/* LIST OF PRODUCTS TO EDIT */}
+              <div className="mt-4 space-y-2 max-h-60 overflow-y-auto">
+                <p className="text-[10px] font-bold text-gray-500 uppercase">Orodha ya Bidhaa Zilizopo (Bonyeza Kuedit):</p>
+                {products.map((p) => (
+                  <div key={p.id} className="flex justify-between items-center bg-white p-2 rounded-lg border text-xs">
+                    <span className="font-bold text-[#12182B] truncate max-w-[200px]">{p.name}</span>
+                    <button
+                      onClick={() => handleEditProductClick(p)}
+                      className="bg-[#12182B] text-white px-2 py-1 rounded text-[10px] font-bold"
+                    >
+                      ✏️ Edit Machaguo
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* MUHTASARI WA JUMLA */}
         {!loading && orders.length > 0 && (
@@ -509,9 +782,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* MALIPO YA WASAMBAZAJI - admin anaweka kiasi alichomlipa kila
-            msambazaji; salio (commission - kilicholipwa) linaonekana hapa
-            NA kwenye dashboard ya msambazaji mwenyewe. */}
+        {/* MALIPO YA WASAMBAZAJI */}
         {!loading && topAffiliates.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5">
             <button
@@ -574,8 +845,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* BIDHAA ZILIZOUZWA - admin anaweza kubadilisha idadi mwenyewe, au
-            kukokotoa kiotomatiki kutoka oda halisi zilizopakiwa juu. */}
+        {/* BIDHAA ZILIZOUZWA */}
         <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5">
           <button
             onClick={() => setShowSoldPanel((v) => !v)}
@@ -594,10 +864,6 @@ export default function AdminPage() {
               >
                 {recalculating ? "Inakokotoa..." : "🔄 Kokotoa Kiotomatiki Kutoka Oda Halisi"}
               </button>
-              <p className="text-[10px] text-gray-400 mb-3">
-                Hii inachambua "items" za oda zote (jina la bidhaa linalofanana) na kujaza idadi halisi.
-                Unaweza pia kubadilisha namba yoyote mwenyewe hapa chini (mfano kwa ajili ya masoko).
-              </p>
 
               {productsLoading ? (
                 <p className="text-xs text-gray-400 text-center py-4">Inapakia bidhaa...</p>
