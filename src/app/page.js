@@ -1065,9 +1065,22 @@ export default function Home() {
 
       {/* PRODUCT VARIATION MODAL */}
       {selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
+        <div 
+          onClick={() => setSelectedProduct(null)} 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto"
+          >
+            {/* KITUFE CHA 'X' KIKUBWA NA RAHISI KUBONYEZA */}
+            <button 
+              onClick={() => setSelectedProduct(null)} 
+              className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors shadow-sm"
+              aria-label="Funga"
+            >
+              ✕
+            </button>
 
             {justAddedToCart ? (
               <div className="flex flex-col items-center text-center py-8 px-2">
@@ -1232,9 +1245,21 @@ export default function Home() {
 
       {/* TRACKING MODAL */}
       {showTrackingModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto">
-            <button onClick={closeTrackingModal} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
+        <div 
+          onClick={closeTrackingModal} 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()} 
+            className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto"
+          >
+            <button 
+              onClick={closeTrackingModal} 
+              className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors shadow-sm"
+              aria-label="Funga"
+            >
+              ✕
+            </button>
             <h3 className="text-base font-bold text-[#12182B] mb-3">📦 Fuatilia Mzigo Wako</h3>
             <p className="text-xs text-gray-500 mb-4">Weka namba ya simu uliyotumia wakati wa kuagiza, tutakuonyesha oda zako.</p>
 
@@ -1350,7 +1375,7 @@ export default function Home() {
                 </h3>
                 <button
                   onClick={() => (checkoutStatus === "success" ? closeCheckoutSuccess() : setShowCartDrawer(false))}
-                  className="text-gray-400 font-bold hover:text-black"
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors"
                 >
                   ✕
                 </button>
