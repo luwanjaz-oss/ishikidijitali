@@ -53,15 +53,12 @@ function getProductVariants(p) {
 
   const options = {};
 
-  // 1. Kama data ya Supabase ipo kama Array ya kawaida (mfano: [{"name": "Lenovo...", "price": 479000}])
   if (Array.isArray(v)) {
     const list = normalizeVariantList(v);
     if (list.length > 0) {
       options["Machaguo Zilizopo"] = list;
     }
-  } 
-  // 2. Kama data ipo kama Object yenye key ya options
-  else if (v && typeof v === "object") {
+  } else if (v && typeof v === "object") {
     if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
       Object.entries(v.options).forEach(([label, arr]) => {
         const list = normalizeVariantList(arr);
@@ -260,6 +257,11 @@ export default function Home() {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
 
+  const [productReviews, setProductReviews] = useState([]);
+  const [newComment, setNewComment] = useState("");
+  const [newRating, setNewRating] = useState(5);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerMkoa, setCustomerMkoa] = useState("Dar es Salaam");
@@ -350,7 +352,7 @@ export default function Home() {
     return () => clearInterval(t);
   }, []);
 
-  const handleOpenProductModal = (product) => {
+  const handleOpenProductModal = async (product) => {
     setSelectedProduct(product);
     const { sizes, colors, types, options } = getProductVariants(product);
     setSelectedSize(sizes[0]?.name || "");
@@ -363,6 +365,41 @@ export default function Home() {
     setSelectedOptions(initialOptions);
     setModalGalleryIdx(0);
     setJustAddedToCart(false);
+
+    if (supabase && product.id) {
+      const { data } = await supabase
+        .from("reviews")
+        .select("*")
+        .eq("product_id", product.id)
+        .order("created_at", { ascending: false });
+      setProductReviews(data || []);
+    }
+  };
+
+  const handleAddReview = async (e) => {
+    e.preventDefault();
+    if (!newComment.trim() || !selectedProduct) return;
+    setIsSubmittingReview(true);
+
+    if (supabase) {
+      const { data, error } = await supabase
+        .from("reviews")
+        .insert([
+          {
+            product_id: selectedProduct.id,
+            customer_name: customerName || "Mteja wa Ishi Kidijitali",
+            rating: newRating,
+            comment: newComment,
+          },
+        ])
+        .select();
+
+      if (!error && data && data.length > 0) {
+        setProductReviews([data[0], ...productReviews]);
+        setNewComment("");
+      }
+    }
+    setIsSubmittingReview(false);
   };
 
   const handleAddToCartWithOptions = () => {
@@ -919,6 +956,14 @@ export default function Home() {
                     <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#17A398] text-white text-[9px] sm:text-[10px] font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full z-10">
                       {p.origin || "DSM / China"}
                     </span>
+
+                    {/* BADGE YA PUNGUZO / OFFER KAMAP.ORIGINAL_PRICE IPO */}
+                    {p.original_price && Number(p.original_price) > Number(p.price) && (
+                      <span className="absolute bottom-2 left-2 bg-red-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-md z-10">
+                        -{Math.round(((p.original_price - p.price) / p.original_price) * 100)}% OFF
+                      </span>
+                    )}
+
                     {images.length > 1 && (
                       <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-black/50 text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-10">
                         📷 {images.length}
@@ -944,7 +989,14 @@ export default function Home() {
 
                     <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
                       <div>
-                        <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(p.price)}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(p.price)}</span>
+                          {p.original_price && Number(p.original_price) > Number(p.price) && (
+                            <span className="text-[10px] sm:text-xs text-gray-400 line-through">
+                              {fmtTZS(p.original_price)}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[9px] sm:text-[10px] text-green-600 font-bold">✓ Pay on Delivery</span>
                       </div>
                       <button
@@ -1147,13 +1199,56 @@ export default function Home() {
                       )}
 
                       <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-                      <p className="text-xs text-gray-500 mb-2 leading-relaxed">{selectedProduct.description}</p>
-                      <p className="text-sm font-extrabold text-[#17A398] mb-4">
-                        {fmtTZS(displayPrice)}
-                        {variantPrice !== null && variantPrice !== selectedProduct.price && (
-                          <span className="text-gray-400 font-normal line-through ml-2 text-xs">{fmtTZS(selectedProduct.price)}</span>
+                      
+                      {/* MAELEZO YA BIDHAA (FORMATTED DESCRIPTION) */}
+                      <div className="mb-3 bg-gray-50 border border-gray-100 p-3 rounded-xl">
+                        <h4 className="text-[11px] font-bold text-[#12182B] mb-1.5 uppercase tracking-wider flex items-center gap-1">
+                          <span>📝</span> Sifa & Maelezo:
+                        </h4>
+                        <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside leading-relaxed">
+                          {selectedProduct.description
+                            ? selectedProduct.description.split(".").map((sentence, idx) => {
+                                const trimmed = sentence.trim();
+                                if (!trimmed) return null;
+                                return <li key={idx} className="marker:text-[#17A398]">{trimmed}.</li>;
+                              })
+                            : <li>Bidhaa bora ya kiwango cha juu.</li>}
+                        </ul>
+                      </div>
+
+                      {/* WARANTI & DHAMANA (FROM SUPABASE WARRANTY_INFO) */}
+                      <div className="mb-3 p-3 bg-[#17A398]/10 border border-[#17A398]/20 rounded-xl flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">🛡️</span>
+                          <div>
+                            <p className="text-xs font-bold text-[#0B5852]">Dhamana & Waranti</p>
+                            <p className="text-[10px] text-gray-500">
+                              {selectedProduct.warranty_info || "Inakuja na waranti rasmi kutoka Ishi Kidijitali."}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[10px] bg-[#17A398] text-white font-bold px-2 py-0.5 rounded-full shrink-0">
+                          ✓ Guaranteed
+                        </span>
+                      </div>
+
+                      {/* BEI MBILI (OFFER PRICE & ORIGINAL PRICE) */}
+                      <div className="flex items-center gap-2 mb-4">
+                        <span className="text-base sm:text-lg font-extrabold text-[#17A398]">
+                          {fmtTZS(displayPrice)}
+                        </span>
+
+                        {selectedProduct.original_price && Number(selectedProduct.original_price) > Number(displayPrice) && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-gray-400 text-xs sm:text-sm line-through">
+                              {fmtTZS(selectedProduct.original_price)}
+                            </span>
+                            <span className="bg-red-100 text-red-600 text-[9px] sm:text-[10px] font-extrabold px-1.5 py-0.5 rounded">
+                              -{Math.round(((selectedProduct.original_price - displayPrice) / selectedProduct.original_price) * 100)}% OFF
+                            </span>
+                          </div>
                         )}
-                      </p>
+                      </div>
                     </>
                   );
                 })()}
@@ -1233,10 +1328,64 @@ export default function Home() {
 
                 <button
                   onClick={handleAddToCartWithOptions}
-                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
+                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mb-4"
                 >
                   Weka Kikapuni 🛒
                 </button>
+
+                {/* REVIEWS & MAONI YA WATEJA */}
+                <div className="border-t border-gray-100 pt-3">
+                  <h4 className="text-xs font-bold text-[#12182B] mb-2 flex items-center justify-between">
+                    <span>⭐ Maoni ya Wateja ({productReviews.length})</span>
+                    <span className="text-[10px] text-yellow-600 font-bold">
+                      ★ {productReviews.length > 0 ? (productReviews.reduce((a, b) => a + Number(b.rating || 5), 0) / productReviews.length).toFixed(1) : "5.0"}
+                    </span>
+                  </h4>
+
+                  <div className="max-h-28 overflow-y-auto space-y-1.5 mb-3 pr-1">
+                    {productReviews.length === 0 ? (
+                      <p className="text-[10px] text-gray-400 italic">Kuwa wa kwanza kuweka maoni kuhusu bidhaa hii!</p>
+                    ) : (
+                      productReviews.map((rev) => (
+                        <div key={rev.id} className="p-2 bg-gray-50 rounded-lg text-xs">
+                          <div className="flex justify-between items-center mb-0.5">
+                            <span className="font-bold text-[#12182B]">{rev.customer_name}</span>
+                            <span className="text-yellow-500 font-bold text-[10px]">{"★".repeat(rev.rating || 5)}</span>
+                          </div>
+                          <p className="text-gray-600 text-[11px]">{rev.comment}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <form onSubmit={handleAddReview} className="space-y-2">
+                    <div className="flex gap-2">
+                      <select
+                        value={newRating}
+                        onChange={(e) => setNewRating(Number(e.target.value))}
+                        className="px-2 py-1 border rounded-lg text-xs bg-white text-yellow-600 font-bold focus:outline-none"
+                      >
+                        <option value={5}>⭐⭐⭐⭐⭐ (5)</option>
+                        <option value={4}>⭐⭐⭐⭐ (4)</option>
+                        <option value={3}>⭐⭐⭐ (3)</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Andika maoni yako hapa..."
+                        value={newComment}
+                        onChange={(e) => setNewComment(e.target.value)}
+                        className="flex-1 px-3 py-1 border rounded-lg text-xs focus:outline-none focus:border-[#17A398]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isSubmittingReview}
+                        className="bg-[#12182B] text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-[#17A398] transition-colors"
+                      >
+                        Tuma
+                      </button>
+                    </div>
+                  </form>
+                </div>
               </>
             )}
           </div>
