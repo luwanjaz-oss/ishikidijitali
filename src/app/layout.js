@@ -1,5 +1,6 @@
 import "./globals.css";
 import { CartProvider } from "@/context/CartContext";
+import Script from "next/script";
 
 export const metadata = {
   title: "Ishi Kidijitali — Agiza. Shea. Pata.",
@@ -22,6 +23,16 @@ export default function RootLayout({ children }) {
       </head>
       <body className="font-['Inter']">
         <CartProvider>{children}</CartProvider>
+
+        {/* BOTPRESS AI CHATBOT SCRIPTS */}
+        <Script
+          src="https://cdn.botpress.cloud/webchat/v5.0/inject.js"
+          strategy="afterInteractive"
+        />
+        <Script
+          src="https://files.bpcontent.cloud/2026/09/26/08/20260926080403-7MVOAZ2Y.js"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );
