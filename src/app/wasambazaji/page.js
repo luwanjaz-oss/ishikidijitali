@@ -68,9 +68,10 @@ export default function WasambajiPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setSiteUrl(window.location.origin);
-      const saved = localStorage.getItem("ishiki_affiliate_session");
-      if (saved) {
-        setRefCode(saved);
+      // Tenga session ya dashboard na ref code ya usambazaji
+      const savedAffiliateSession = localStorage.getItem("ishiki_affiliate_session");
+      if (savedAffiliateSession) {
+        setRefCode(savedAffiliateSession);
       }
     }
     setLoading(false);
@@ -86,7 +87,14 @@ export default function WasambajiPage() {
       .order("created_at", { ascending: false })
       .limit(1);
 
-    if (affRows && affRows.length > 0) setAffiliate(affRows[0]);
+    if (affRows && affRows.length > 0) {
+      setAffiliate(affRows[0]);
+    } else {
+      // Kama code haijapatikana, ondoa session ili kuzuia kuonyesha dashboard isiyo na mhusika
+      localStorage.removeItem("ishiki_affiliate_session");
+      setRefCode(null);
+      return;
+    }
 
     const { data: ordersData, error } = await supabase
       .from("orders")
@@ -160,6 +168,7 @@ export default function WasambajiPage() {
     const cleanPhone = phone.trim();
 
     try {
+      // 1. Kagua kama namba tayari ni Msambazaji aliyepo
       const { data: existingRows, error: lookupErr } = await supabase
         .from("affiliates")
         .select("*")
@@ -173,35 +182,59 @@ export default function WasambajiPage() {
         existingRows && existingRows.length > 0 ? existingRows[0] : null;
 
       if (existing) {
+        // Hakikisha namba hii ilishanunua bidhaa kabla ya kuingia
+        const { data: userPurchases } = await supabase
+          .from("orders")
+          .select("id")
+          .eq("customer_phone", cleanPhone)
+          .limit(1);
+
+        if (!userPurchases || userPurchases.length === 0) {
+          setRegError(
+            "Akaunti yako haijakamilika. Ni lazima uwe umeshanunua angalau bidhaa moja Ishi Kidijitali ili kuweza kuingia kwenye dashboard ya msambazaji."
+          );
+          setRegSubmitting(false);
+          return;
+        }
+
         localStorage.setItem("ishiki_affiliate_session", existing.ref_code);
         setRefCode(existing.ref_code);
         setRegSubmitting(false);
         return;
       }
 
+      // 2. UKAGUZI WA ODA: Mtu lazima awe amenunua bidhaa kabla ya kujiunga!
       const referringCode =
         typeof window !== "undefined"
           ? localStorage.getItem("ishiki_ref_code")
           : null;
+
+      let purchaseQuery = supabase
+        .from("orders")
+        .select("id")
+        .eq("customer_phone", cleanPhone);
+
+      // Kama alikuja kupitia link ya msambazaji fulani:
       if (referringCode) {
-        const { data: purchaseRows, error: purchaseErr } = await supabase
-          .from("orders")
-          .select("id")
-          .eq("ref_code", referringCode)
-          .eq("customer_phone", cleanPhone)
-          .limit(1);
-
-        if (purchaseErr) throw purchaseErr;
-
-        if (!purchaseRows || purchaseRows.length === 0) {
-          setRegError(
-            "Kabla ya kujiunga kama msambazaji, ni lazima kwanza ununue bidhaa kupitia link uliyopewa. Baada ya kununua, jaribu kujisajili tena kwa namba hiyo hiyo ya simu."
-          );
-          setRegSubmitting(false);
-          return;
-        }
+        purchaseQuery = purchaseQuery.eq("ref_code", referringCode);
       }
 
+      const { data: purchaseRows, error: purchaseErr } = await purchaseQuery.limit(1);
+
+      if (purchaseErr) throw purchaseErr;
+
+      // Kama hana oda yoyote, mmnyime fursa ya kujiunga na umpe ujumbe maalum
+      if (!purchaseRows || purchaseRows.length === 0) {
+        setRegError(
+          referringCode
+            ? "Kabla ya kujiunga kama msambazaji, ni lazima kwanza ununue bidhaa kupitia link uliyopewa. Baada ya kununua, jaribu kujisajili tena kwa namba hiyo hiyo ya simu."
+            : "Ili uwe msambazaji wa Ishi Kidijitali, ni lazima uwe umeshanunua angalau bidhaa 1 kwenye tovuti yetu. Nunua bidhaa kwanza kisha ujisajili tena kwa namba hii ya simu."
+        );
+        setRegSubmitting(false);
+        return;
+      }
+
+      // 3. Tengeneza Msambazaji Mpya
       let created = null;
       let lastError = null;
 
@@ -340,7 +373,7 @@ export default function WasambajiPage() {
                   className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:border-[#17A398] focus:ring-2 focus:ring-[#17A398]/20 transition-all"
                 />
                 <p className="text-[10px] text-gray-400 mt-1">
-                  Hakikisha namba hii ina WhatsApp - ndiyo utakayowasiliana nayo kuhusu oda na malipo.
+                  Weka namba uliyotumia kuagiza bidhaa kwenye mfumo.
                 </p>
               </div>
 
@@ -358,10 +391,10 @@ export default function WasambajiPage() {
                 {regSubmitting ? (
                   <>
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                    <span>Inasajili...</span>
+                    <span className="text-xs">Inakagua Oda & Inasajili...</span>
                   </>
                 ) : (
-                  <span>Jisajili Sasa 🚀</span>
+                  <span>Jisajili / Ingia Sasa 🚀</span>
                 )}
               </button>
             </form>
@@ -402,11 +435,11 @@ export default function WasambajiPage() {
                 }}
                 className="text-[10px] text-gray-400 hover:text-red-500 font-semibold underline whitespace-nowrap self-start transition-colors"
               >
-                Badilisha Akaunti
+                Badilisha Akaunti / Ondoka
               </button>
             </div>
 
-            {/* KADI YA KUPONI YA ZAWADI (5 SALES COUPON REWARD CARD) */}
+            {/* KADI YA KUPONI YA ZAWADI */}
             <div className="animate-card-in bg-gradient-to-br from-[#12182B] via-[#1A233D] to-[#17A398] text-white p-5 sm:p-6 rounded-3xl shadow-xl relative overflow-hidden border border-amber-400/30">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <span className="bg-amber-400 text-black text-[10px] font-black uppercase px-3 py-1 rounded-full shadow">
