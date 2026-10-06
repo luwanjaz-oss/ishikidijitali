@@ -68,7 +68,6 @@ export default function WasambajiPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setSiteUrl(window.location.origin);
-      // Tenga session ya dashboard na ref code ya usambazaji
       const savedAffiliateSession = localStorage.getItem("ishiki_affiliate_session");
       if (savedAffiliateSession) {
         setRefCode(savedAffiliateSession);
@@ -90,7 +89,6 @@ export default function WasambajiPage() {
     if (affRows && affRows.length > 0) {
       setAffiliate(affRows[0]);
     } else {
-      // Kama code haijapatikana, ondoa session ili kuzuia kuonyesha dashboard isiyo na mhusika
       localStorage.removeItem("ishiki_affiliate_session");
       setRefCode(null);
       return;
@@ -168,7 +166,7 @@ export default function WasambajiPage() {
     const cleanPhone = phone.trim();
 
     try {
-      // 1. Kagua kama namba tayari ni Msambazaji aliyepo
+      // 1. Kagua kama namba tayari ni ya Msambazaji aliyepo (Log in)
       const { data: existingRows, error: lookupErr } = await supabase
         .from("affiliates")
         .select("*")
@@ -182,59 +180,40 @@ export default function WasambajiPage() {
         existingRows && existingRows.length > 0 ? existingRows[0] : null;
 
       if (existing) {
-        // Hakikisha namba hii ilishanunua bidhaa kabla ya kuingia
-        const { data: userPurchases } = await supabase
-          .from("orders")
-          .select("id")
-          .eq("customer_phone", cleanPhone)
-          .limit(1);
-
-        if (!userPurchases || userPurchases.length === 0) {
-          setRegError(
-            "Akaunti yako haijakamilika. Ni lazima uwe umeshanunua angalau bidhaa moja Ishi Kidijitali ili kuweza kuingia kwenye dashboard ya msambazaji."
-          );
-          setRegSubmitting(false);
-          return;
-        }
-
         localStorage.setItem("ishiki_affiliate_session", existing.ref_code);
         setRefCode(existing.ref_code);
         setRegSubmitting(false);
         return;
       }
 
-      // 2. UKAGUZI WA ODA: Mtu lazima awe amenunua bidhaa kabla ya kujiunga!
+      // 2. UKAGUZI WA REFERRAL LINK:
+      // Mtu anatakiwa kununua kwanza TU pale anapokuwa ameingia kupitia link ya msambazaji mwingine (`ishiki_ref_code`).
       const referringCode =
         typeof window !== "undefined"
           ? localStorage.getItem("ishiki_ref_code")
           : null;
 
-      let purchaseQuery = supabase
-        .from("orders")
-        .select("id")
-        .eq("customer_phone", cleanPhone);
-
-      // Kama alikuja kupitia link ya msambazaji fulani:
       if (referringCode) {
-        purchaseQuery = purchaseQuery.eq("ref_code", referringCode);
+        const { data: purchaseRows, error: purchaseErr } = await supabase
+          .from("orders")
+          .select("id")
+          .eq("ref_code", referringCode)
+          .eq("customer_phone", cleanPhone)
+          .limit(1);
+
+        if (purchaseErr) throw purchaseErr;
+
+        // Kama alikuja kwa link ya mtu lakini hajafanya oda kwa namba hii, azuiwe
+        if (!purchaseRows || purchaseRows.length === 0) {
+          setRegError(
+            "Umeingia kupitia link ya msambazaji. Ni lazima kwanza ununue bidhaa kupitia link hiyo uliyopewa ndipo uweze kujisajili kama msambazaji. Baada ya kununua, jaribu tena kwa namba hii ya simu."
+          );
+          setRegSubmitting(false);
+          return;
+        }
       }
 
-      const { data: purchaseRows, error: purchaseErr } = await purchaseQuery.limit(1);
-
-      if (purchaseErr) throw purchaseErr;
-
-      // Kama hana oda yoyote, mmnyime fursa ya kujiunga na umpe ujumbe maalum
-      if (!purchaseRows || purchaseRows.length === 0) {
-        setRegError(
-          referringCode
-            ? "Kabla ya kujiunga kama msambazaji, ni lazima kwanza ununue bidhaa kupitia link uliyopewa. Baada ya kununua, jaribu kujisajili tena kwa namba hiyo hiyo ya simu."
-            : "Ili uwe msambazaji wa Ishi Kidijitali, ni lazima uwe umeshanunua angalau bidhaa 1 kwenye tovuti yetu. Nunua bidhaa kwanza kisha ujisajili tena kwa namba hii ya simu."
-        );
-        setRegSubmitting(false);
-        return;
-      }
-
-      // 3. Tengeneza Msambazaji Mpya
+      // 3. Tengeneza Msambazaji Mpya (Direct user au Referral user aliyeshanunua)
       let created = null;
       let lastError = null;
 
@@ -373,7 +352,7 @@ export default function WasambajiPage() {
                   className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:border-[#17A398] focus:ring-2 focus:ring-[#17A398]/20 transition-all"
                 />
                 <p className="text-[10px] text-gray-400 mt-1">
-                  Weka namba uliyotumia kuagiza bidhaa kwenye mfumo.
+                  Namba hii ndiyo itakayotumika kupokea taarifa na malipo yako.
                 </p>
               </div>
 
@@ -391,7 +370,7 @@ export default function WasambajiPage() {
                 {regSubmitting ? (
                   <>
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                    <span className="text-xs">Inakagua Oda & Inasajili...</span>
+                    <span className="text-xs">Inasajili...</span>
                   </>
                 ) : (
                   <span>Jisajili / Ingia Sasa 🚀</span>
