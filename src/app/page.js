@@ -9,9 +9,15 @@ const WHATSAPP_NUMBER = "255754282086";
 const LIPA_NAMBA = "58176639";
 const NBC_ACCOUNT = "106174003449";
 const ACCOUNT_NAME = "Zacharia Luwanja";
+const SITE_URL = "https://ishikidijitali.com";
 
+// Kama bidhaa haina "commission" iliyowekwa Supabase, hii ndiyo default.
 const DEFAULT_COMMISSION_RATE = 0.20; // 20%
 
+// COMMISSION INASOMWA MOJA KWA MOJA KUTOKA "products.commission" (Supabase).
+// Jedwali la "affiliates" halina kolamu ya commission - kila msambazaji
+// anapata commission kulingana na commission ya BIDHAA aliyouza, siyo
+// kiwango chake binafsi.
 function getProductCommissionRate(item) {
   const raw = item.commission;
   if (raw === null || raw === undefined || raw === "") {
@@ -19,9 +25,11 @@ function getProductCommissionRate(item) {
   }
   const num = Number(raw);
   if (Number.isNaN(num)) return DEFAULT_COMMISSION_RATE;
+  // Mfano: 20 kwenye DB inamaanisha 20% -> 0.20
   return num > 1 ? num / 100 : num;
 }
 
+// MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb).
 function normalizeVariantList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -50,27 +58,17 @@ function getProductVariants(p) {
       return { sizes: [], colors: [], types: [], options: {} };
     }
   }
-
   const options = {};
-
-  if (Array.isArray(v)) {
-    const list = normalizeVariantList(v);
-    if (list.length > 0) {
-      options["Machaguo Zilizopo"] = list;
-    }
-  } else if (v && typeof v === "object") {
-    if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
-      Object.entries(v.options).forEach(([label, arr]) => {
-        const list = normalizeVariantList(arr);
-        if (list.length > 0) options[label] = list;
-      });
-    }
+  if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
+    Object.entries(v.options).forEach(([label, arr]) => {
+      const list = normalizeVariantList(arr);
+      if (list.length > 0) options[label] = list;
+    });
   }
-
   return {
-    sizes: normalizeVariantList(v?.sizes),
-    colors: normalizeVariantList(v?.colors),
-    types: normalizeVariantList(v?.types),
+    sizes: normalizeVariantList(v.sizes),
+    colors: normalizeVariantList(v.colors),
+    types: normalizeVariantList(v.types),
     options,
   };
 }
@@ -81,33 +79,6 @@ const MIKOA = [
   "Kigoma", "Tabora", "Iringa", "Ruvuma (Songea)", "Sumbawanga",
   "Mtwara", "Lindi", "Shinyanga", "Kagera (Bukoba)", "Mara (Musoma)"
 ];
-
-const SOURCING_TYPES = [
-  {
-    id: "dsm_ndogo",
-    label: "Mzigo Mdogo / Kawaida (Dar es Salaam)",
-    desc: "Kariakoo / DSM • Ada ya huduma 25,000 TZS",
-  },
-  {
-    id: "biashara_mkubwa",
-    label: "Mzigo Mkubwa / Wa Biashara",
-    desc: "Mashine, vifaa vingi au jumla • Ada ya huduma 60,000 TZS",
-  },
-  {
-    id: "nje_ya_nchi",
-    label: "Kuagiza Nje ya Nchi (China / USA / Dubai)",
-    desc: "50,000 TZS (< 300,000 TZS) au 70,000 TZS (≥ 300,000 TZS)",
-  },
-];
-
-function calculateCustomServiceFee(sourcingType, estimatedCost) {
-  const cost = Number(estimatedCost) || 0;
-  if (sourcingType === "biashara_mkubwa") return 60000;
-  if (sourcingType === "nje_ya_nchi") {
-    return cost >= 300000 ? 70000 : 50000;
-  }
-  return 25000;
-}
 
 const TRANSPORT_ROUTES = [
   { flag: "🇨🇳", name: "China → Dar es Salaam", days: "Siku 7 - 14 (Air Cargo)", progress: "75%" },
@@ -120,7 +91,7 @@ const TRANSPORT_ROUTES = [
 const FURSA_ZA_ISHIKI = [
   { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
   { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
-  { icon: "🏠", title: "Pandezesha Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
+  { icon: "🏠", title: "Pambeza Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
   { icon: "📈", title: "Kuza Biashara", desc: "Ongeza bidhaa mpya, kuza biashara uliyonayo" },
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
@@ -283,22 +254,7 @@ export default function Home() {
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
-
-  // CUSTOM REQUEST ("AGIZA KITU WHATSAPP") MODAL STATES
-  const [showCustomRequestModal, setShowCustomRequestModal] = useState(false);
-  const [reqName, setReqName] = useState("");
-  const [reqPhone, setReqPhone] = useState("");
-  const [reqMkoa, setReqMkoa] = useState("Dar es Salaam");
-  const [reqSourcingType, setReqSourcingType] = useState("dsm_ndogo");
-  const [reqProductDetails, setReqProductDetails] = useState("");
-  const [reqEstimatedCost, setReqEstimatedCost] = useState("");
-  const [reqSubmitting, setReqSubmitting] = useState(false);
-  const [reqSuccessMsg, setReqSuccessMsg] = useState("");
-
-  const [productReviews, setProductReviews] = useState([]);
-  const [newComment, setNewComment] = useState("");
-  const [newRating, setNewRating] = useState(5);
-  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [copiedProductId, setCopiedProductId] = useState(null);
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -343,6 +299,64 @@ export default function Home() {
 
   const [checkoutStatus, setCheckoutStatus] = useState("idle");
   const [lastOrder, setLastOrder] = useState(null);
+
+  function buildProductShareData(product) {
+    const origin =
+      typeof window !== "undefined" && window.location.origin.startsWith("http")
+        ? window.location.origin
+        : SITE_URL;
+    const refCode =
+      activeRefCode ||
+      (typeof window !== "undefined" ? localStorage.getItem("ishiki_ref_code") : "");
+
+    const url = new URL(`${origin}/product/${product.id}`);
+    if (refCode) {
+      url.searchParams.set("ref", refCode);
+    }
+
+    const productUrl = url.toString();
+    const shareText =
+      `🔥 *${product.name}*\n` +
+      `💰 Bei: *${fmtTZS(product.price)}*\n` +
+      `✅ Agiza sasa kupitia Ishi Kidijitali:\n${productUrl}`;
+
+    return { productUrl, shareText };
+  }
+
+  function handleShareWhatsApp(product) {
+    const { shareText } = buildProductShareData(product);
+    window.open(
+      `https://wa.me/?text=${encodeURIComponent(shareText)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+
+  async function handleShareDevice(product) {
+    const { productUrl, shareText } = buildProductShareData(product);
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${product.name} — ${fmtTZS(product.price)}`,
+          text: shareText,
+          url: productUrl,
+        });
+        return;
+      } catch {
+        // Mtumiaji akifunga share sheet, rudi WhatsApp
+      }
+    }
+    handleShareWhatsApp(product);
+  }
+
+  async function handleCopyLink(product) {
+    const { productUrl } = buildProductShareData(product);
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(productUrl);
+      setCopiedProductId(product.id);
+      setTimeout(() => setCopiedProductId(null), 2500);
+    }
+  }
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -390,7 +404,7 @@ export default function Home() {
     return () => clearInterval(t);
   }, []);
 
-  const handleOpenProductModal = async (product) => {
+  const handleOpenProductModal = (product) => {
     setSelectedProduct(product);
     const { sizes, colors, types, options } = getProductVariants(product);
     setSelectedSize(sizes[0]?.name || "");
@@ -403,41 +417,6 @@ export default function Home() {
     setSelectedOptions(initialOptions);
     setModalGalleryIdx(0);
     setJustAddedToCart(false);
-
-    if (supabase && product.id) {
-      const { data } = await supabase
-        .from("reviews")
-        .select("*")
-        .eq("product_id", product.id)
-        .order("created_at", { ascending: false });
-      setProductReviews(data || []);
-    }
-  };
-
-  const handleAddReview = async (e) => {
-    e.preventDefault();
-    if (!newComment.trim() || !selectedProduct) return;
-    setIsSubmittingReview(true);
-
-    if (supabase) {
-      const { data, error } = await supabase
-        .from("reviews")
-        .insert([
-          {
-            product_id: selectedProduct.id,
-            customer_name: customerName || "Mteja wa Ishi Kidijitali",
-            rating: newRating,
-            comment: newComment,
-          },
-        ])
-        .select();
-
-      if (!error && data && data.length > 0) {
-        setProductReviews([data[0], ...productReviews]);
-        setNewComment("");
-      }
-    }
-    setIsSubmittingReview(false);
   };
 
   const handleAddToCartWithOptions = () => {
@@ -497,64 +476,6 @@ export default function Home() {
     }
   };
 
-  const handleCustomRequestSubmit = async (e) => {
-    e.preventDefault();
-    if (!reqProductDetails.trim() || reqSubmitting) return;
-    setReqSubmitting(true);
-    setReqSuccessMsg("");
-
-    const estCost = Number(reqEstimatedCost) || 0;
-    const serviceFee = calculateCustomServiceFee(reqSourcingType, estCost);
-    const sourcingLabel =
-      SOURCING_TYPES.find((s) => s.id === reqSourcingType)?.label || reqSourcingType;
-
-    try {
-      if (supabase) {
-        const { error } = await supabase.from("custom_requests").insert([
-          {
-            customer_name: reqName.trim() || "Mteja",
-            customer_phone: reqPhone.trim(),
-            region: reqMkoa,
-            sourcing_type: sourcingLabel,
-            product_details: reqProductDetails.trim(),
-            estimated_product_cost: estCost,
-            service_fee: serviceFee,
-            amount_paid: 0,
-            payment_status: "hajalipa",
-            status: "pending",
-            transport_method: "",
-            status_note: "",
-          },
-        ]);
-        if (error) {
-          console.error("custom_requests insert error:", error);
-        }
-      }
-    } catch (err) {
-      console.error("custom_requests submit error:", err);
-    }
-
-    const msg =
-      `🛍️ *OMBI MAALUM LA KUAGIZIWA KITU (ISHI KIDIJITALI)*\n\n` +
-      `👤 *Mteja:* ${reqName.trim() || "Bila Jina"}\n` +
-      `📞 *Simu:* ${reqPhone.trim() || "Haijawekwa"}\n` +
-      `📍 *Mkoa:* ${reqMkoa}\n` +
-      `📦 *Aina ya Agizo:* ${sourcingLabel}\n` +
-      `📝 *Bidhaa / Kifaa Kinachotakiwa:*\n${reqProductDetails.trim()}\n\n` +
-      `💰 *Makadirio ya Bidhaa:* ${fmtTZS(estCost)}\n` +
-      `🧾 *Ada ya Huduma (Service Fee):* ${fmtTZS(serviceFee)}\n` +
-      `💵 *Jumla ya Makadirio (Bidhaa + Service Fee):* ${fmtTZS(estCost + serviceFee)}\n\n` +
-      `Tafadhali nisaidie kunithibitishia upatikanaji, usafiri, na hatua zinazofuata.`;
-
-    window.open(
-      `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`,
-      "_blank"
-    );
-
-    setReqSuccessMsg("Ombi lako limetumwa kwenye WhatsApp na kuhifadhiwa!");
-    setReqSubmitting(false);
-  };
-
   const handleWhatsAppCheckout = async (e) => {
     e.preventDefault();
     if (cart.length === 0 || checkoutStatus === "submitting") return;
@@ -591,6 +512,7 @@ export default function Home() {
       }))
     );
 
+    let orderInsertError = null;
     let insertedOrder = null;
     try {
       if (supabase) {
@@ -608,17 +530,20 @@ export default function Home() {
               ref_code: activeRefCode || null,
               commission_total: activeRefCode ? Math.round(totalCommission) : 0,
               status: "pending",
-            },
+            }
           ])
           .select()
           .single();
-        if (error) {
-          console.error("Supabase order error:", error);
-        }
+        if (error) orderInsertError = error;
         insertedOrder = data;
       }
     } catch (err) {
-      console.error("Supabase order exception:", err);
+      orderInsertError = err;
+    }
+
+    if (orderInsertError) {
+      console.error("Supabase order error:", orderInsertError);
+      alert("Kuna tatizo la kuhifadhi oda Supabase (ingawa WhatsApp itafunguka). Tafadhali mwambie msimamizi: " + (orderInsertError.message || "unknown error"));
     }
 
     setLastOrder({
@@ -737,6 +662,7 @@ export default function Home() {
   };
 
   const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
+  const cartTotal = cart ? cart.reduce((s, i) => s + i.price * (i.qty || 1), 0) : 0;
   const filteredProducts = products.filter((p) => {
     if (category === "wote") return true;
     const pc = (p.category || "").toString().trim().toLowerCase();
@@ -747,9 +673,6 @@ export default function Home() {
 
   const modalImages = selectedProduct ? getProductImages(selectedProduct) : [];
   const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [], options: {} };
-
-  const computedServiceFee = calculateCustomServiceFee(reqSourcingType, reqEstimatedCost);
-  const computedEstTotal = (Number(reqEstimatedCost) || 0) + computedServiceFee;
 
   return (
     <main className="bg-[#F7F3EA] min-h-screen relative text-[#12182B]">
@@ -765,7 +688,7 @@ export default function Home() {
           </Link>
 
           <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-white/80">
-            <a href="#duka" className="hover:text-white transition-colors">Duka</a>
+            <Link href="#duka" className="hover:text-white transition-colors">Duka</Link>
             <a href="#kuhusu" className="hover:text-white transition-colors">Kuhusu Sisi</a>
             <button onClick={() => setShowTrackingModal(true)} className="hover:text-white transition-colors">Fuatilia Mzigo 📦</button>
             <a href="#uwekezaji" className="hover:text-white transition-colors">Wekeza / Lipa Namba 💰</a>
@@ -821,16 +744,9 @@ export default function Home() {
               Tafuta bidhaa au mashine yoyote - tunakununulia kutoka sokoni Kariakoo au Nje ya Nchi na kukuletea mkoani kwako kwa usalama.
             </p>
             <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setReqSuccessMsg("");
-                  setShowCustomRequestModal(true);
-                }}
-                className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg"
-              >
+              <a href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nataka kuagiza bidhaa/kifaa.")}`} target="_blank" rel="noreferrer" className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg">
                 Agiza Kitu WhatsApp
-              </button>
+              </a>
               <Link href="/wasambazaji" className="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl font-semibold text-xs border border-white/20 transition-colors">
                 Jiunge Kama Msambazaji
               </Link>
@@ -1050,36 +966,26 @@ export default function Home() {
               const images = getProductImages(p);
               return (
                 <div key={p.id} className="bg-white border border-[#E4DFD2] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all">
-                  <div
-                    onClick={() => handleOpenProductModal(p)}
-                    className="aspect-square w-full bg-[#F0FAF8] relative flex items-center justify-center p-2.5 cursor-pointer group overflow-hidden"
-                  >
+                  <Link href={`/product/${p.id}`} className="h-40 sm:h-52 bg-[#F0FAF8] relative flex items-center justify-center p-2">
                     <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#17A398] text-white text-[9px] sm:text-[10px] font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full z-10">
                       {p.origin || "DSM / China"}
                     </span>
-
-                    {p.original_price && Number(p.original_price) > Number(p.price) && (
-                      <span className="absolute bottom-2 left-2 bg-red-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-md z-10">
-                        -{Math.round(((p.original_price - p.price) / p.original_price) * 100)}% OFF
-                      </span>
-                    )}
-
                     {images.length > 1 && (
                       <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-black/50 text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-10">
                         📷 {images.length}
                       </span>
                     )}
                     {images.length > 0 ? (
-                      <img src={images[0]} alt={p.name} className="w-full h-full object-contain rounded-lg group-hover:scale-105 transition-transform duration-300" />
+                      <img src={images[0]} alt={p.name} className="h-full object-contain hover:scale-105 transition-transform duration-300" />
                     ) : (
                       <span className="text-4xl sm:text-5xl">{p.emoji || "📦"}</span>
                     )}
-                  </div>
+                  </Link>
 
                   <div className="p-3 sm:p-4 flex flex-col gap-2 flex-1">
-                    <div onClick={() => handleOpenProductModal(p)} className="cursor-pointer">
-                      <h3 className="text-xs sm:text-sm font-bold text-[#12182B] line-clamp-1 hover:text-[#17A398] transition-colors">{p.name}</h3>
-                    </div>
+                    <Link href={`/product/${p.id}`}>
+                      <h3 className="text-xs sm:text-sm font-bold text-[#12182B] line-clamp-1">{p.name}</h3>
+                    </Link>
                     <p className="text-[11px] sm:text-xs text-[#6B7280] line-clamp-2 leading-relaxed">{p.description}</p>
                     {Number(p.sold_count) > 0 && (
                       <span className="text-[9px] sm:text-[10px] text-[#E8A93B] font-bold">
@@ -1089,22 +995,25 @@ export default function Home() {
 
                     <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
                       <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(p.price)}</span>
-                          {p.original_price && Number(p.original_price) > Number(p.price) && (
-                            <span className="text-[10px] sm:text-xs text-gray-400 line-through">
-                              {fmtTZS(p.original_price)}
-                            </span>
-                          )}
-                        </div>
+                        <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(p.price)}</span>
                         <span className="text-[9px] sm:text-[10px] text-green-600 font-bold">✓ Pay on Delivery</span>
                       </div>
-                      <button
-                        onClick={() => handleOpenProductModal(p)}
-                        className="bg-[#12182B] hover:bg-[#17A398] text-white text-[11px] sm:text-xs font-bold px-2.5 py-2 sm:px-3 rounded-xl transition-colors"
-                      >
-                        + Ongeza
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleShareDevice(p)}
+                          title="Sambaza Bidhaa"
+                          className="bg-gray-100 hover:bg-gray-200 text-[#12182B] text-[11px] font-bold px-2 py-2 rounded-xl transition-colors"
+                        >
+                          📤
+                        </button>
+                        <button
+                          onClick={() => handleOpenProductModal(p)}
+                          className="bg-[#12182B] hover:bg-[#17A398] text-white text-[11px] sm:text-xs font-bold px-2.5 py-2 sm:px-3 rounded-xl transition-colors"
+                        >
+                          + Ongeza
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1215,176 +1124,11 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* CUSTOM REQUEST ("AGIZA KITU WHATSAPP") MODAL */}
-      {showCustomRequestModal && (
-        <div
-          onClick={() => setShowCustomRequestModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto"
-          >
-            <button
-              onClick={() => setShowCustomRequestModal(false)}
-              className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors"
-              aria-label="Funga"
-            >
-              ✕
-            </button>
-
-            <h3 className="text-base font-bold text-[#12182B] mb-1">🛍️ Agiza Kitu WhatsApp</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              Tuambie bidhaa au mashine unayotaka kutoka DSM, China, USA au Dubai. Ada ya huduma inakokotolewa kiotomatiki.
-            </p>
-
-            <form onSubmit={handleCustomRequestSubmit} className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold block mb-1">Jina Kamili:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Mfano: Juma Ally"
-                  value={reqName}
-                  onChange={(e) => setReqName(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="font-bold block mb-1">Simu (WhatsApp):</label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="0754XXXXXX"
-                    value={reqPhone}
-                    onChange={(e) => setReqPhone(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold block mb-1">Mkoa:</label>
-                  <select
-                    value={reqMkoa}
-                    onChange={(e) => setReqMkoa(e.target.value)}
-                    className="w-full px-2 py-2 border rounded-xl bg-white font-semibold focus:outline-none focus:border-[#17A398]"
-                  >
-                    {MIKOA.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold block mb-1">Chagua Aina ya Agizo / Service Fee:</label>
-                <div className="space-y-2">
-                  {SOURCING_TYPES.map((st) => (
-                    <label
-                      key={st.id}
-                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-colors ${
-                        reqSourcingType === st.id
-                          ? "bg-[#17A398]/10 border-[#17A398]"
-                          : "bg-gray-50 border-gray-200"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="sourcingType"
-                        value={st.id}
-                        checked={reqSourcingType === st.id}
-                        onChange={(e) => setReqSourcingType(e.target.value)}
-                        className="mt-0.5"
-                      />
-                      <div>
-                        <p className="font-bold text-[#12182B]">{st.label}</p>
-                        <p className="text-[10px] text-gray-500">{st.desc}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold block mb-1">Makadirio ya Bei ya Bidhaa (TZS):</label>
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Mfano: 250000 au 450000"
-                  value={reqEstimatedCost}
-                  onChange={(e) => setReqEstimatedCost(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
-                />
-                {reqSourcingType === "nje_ya_nchi" && (
-                  <p className="text-[10px] text-[#0B5852] font-semibold mt-1">
-                    Nje ya nchi: Chini ya 300,000 TZS = 50,000 TZS | 300,000 TZS au zaidi = 70,000 TZS.
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="font-bold block mb-1">Maelezo ya Bidhaa / Kifaa Unachotaka:</label>
-                <textarea
-                  rows={3}
-                  required
-                  placeholder="Eleza jina la bidhaa, model, idadi, rangi/uwezo, au link kama unayo..."
-                  value={reqProductDetails}
-                  onChange={(e) => setReqProductDetails(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
-                />
-              </div>
-
-              <div className="bg-[#F7F3EA] p-3 rounded-xl space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Makadirio ya Bidhaa:</span>
-                  <span className="font-bold">{fmtTZS(Number(reqEstimatedCost) || 0)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Ada ya Huduma (Service Fee):</span>
-                  <span className="font-extrabold text-[#17A398]">{fmtTZS(computedServiceFee)}</span>
-                </div>
-                <div className="flex justify-between pt-1 border-t border-black/10 font-extrabold text-sm">
-                  <span>Jumla ya Makadirio:</span>
-                  <span>{fmtTZS(computedEstTotal)}</span>
-                </div>
-              </div>
-
-              {reqSuccessMsg && (
-                <p className="text-xs font-bold text-green-600 bg-green-50 p-2 rounded-lg">
-                  ✅ {reqSuccessMsg}
-                </p>
-              )}
-
-              <button
-                type="submit"
-                disabled={reqSubmitting}
-                className="w-full bg-[#25D366] hover:bg-[#1ea952] disabled:opacity-60 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow"
-              >
-                {reqSubmitting ? "⏳ Inatuma..." : "💬 Tuma Ombi WhatsApp"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* PRODUCT VARIATION MODAL */}
       {selectedProduct && (
-        <div
-          onClick={() => setSelectedProduct(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto"
-          >
-            <button
-              onClick={() => setSelectedProduct(null)}
-              className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors shadow-sm"
-              aria-label="Funga"
-            >
-              ✕
-            </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
 
             {justAddedToCart ? (
               <div className="flex flex-col items-center text-center py-8 px-2">
@@ -1404,7 +1148,7 @@ export default function Home() {
                     onClick={handleGoToCartFromModal}
                     className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow"
                   >
-                    🛒 Nenda Kikapuni ({cartCount})
+                    🛒 Nenda Kikapuni ({cartCount + 1})
                   </button>
                 </div>
               </div>
@@ -1428,22 +1172,21 @@ export default function Home() {
                       {(displayImage || modalImages.length > 0) && (
                         <div className="mb-4">
                           <div
-                            className="h-52 sm:h-60 w-full bg-[#F0FAF8] rounded-xl flex items-center justify-center p-2 overflow-hidden select-none touch-pan-y relative"
+                            className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden select-none touch-pan-y"
                             onTouchStart={handleSwipeStart}
                             onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, modalImages.length, modalGalleryIdx, setModalGalleryIdx)}
                           >
                             {displayImage ? (
-                              <img src={displayImage} alt={selectedProduct.name} className="w-full h-full object-contain rounded-lg pointer-events-none" draggable={false} />
+                              <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain pointer-events-none" draggable={false} />
                             ) : null}
                           </div>
                           {!variantImage && modalImages.length > 1 && (
                             <div className="flex justify-center gap-1.5 mt-2">
                               {modalImages.map((_, i) => (
-                                <button
+                                <span
                                   key={i}
-                                  onClick={() => setModalGalleryIdx(i)}
-                                  className={`h-2 rounded-full transition-all ${i === modalGalleryIdx ? "w-6 bg-[#17A398]" : "w-2 bg-gray-300"}`}
-                                ></button>
+                                  className={`h-1.5 rounded-full transition-all ${i === modalGalleryIdx ? "w-5 bg-[#17A398]" : "w-1.5 bg-gray-300"}`}
+                                ></span>
                               ))}
                             </div>
                           )}
@@ -1451,53 +1194,12 @@ export default function Home() {
                       )}
 
                       <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-
-                      <div className="mb-3 bg-gray-50 border border-gray-100 p-3 rounded-xl">
-                        <h4 className="text-[11px] font-bold text-[#12182B] mb-1.5 uppercase tracking-wider flex items-center gap-1">
-                          <span>📝</span> Sifa & Maelezo:
-                        </h4>
-                        <ul className="text-xs text-gray-600 space-y-1 list-disc list-inside leading-relaxed">
-                          {selectedProduct.description
-                            ? selectedProduct.description.split(".").map((sentence, idx) => {
-                                const trimmed = sentence.trim();
-                                if (!trimmed) return null;
-                                return <li key={idx} className="marker:text-[#17A398]">{trimmed}.</li>;
-                              })
-                            : <li>Bidhaa bora ya kiwango cha juu.</li>}
-                        </ul>
-                      </div>
-
-                      <div className="mb-3 p-3 bg-[#17A398]/10 border border-[#17A398]/20 rounded-xl flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xl">🛡️</span>
-                          <div>
-                            <p className="text-xs font-bold text-[#0B5852]">Dhamana & Waranti</p>
-                            <p className="text-[10px] text-gray-500">
-                              {selectedProduct.warranty_info || "Inakuja na waranti rasmi kutoka Ishi Kidijitali."}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="text-[10px] bg-[#17A398] text-white font-bold px-2 py-0.5 rounded-full shrink-0">
-                          ✓ Guaranteed
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2 mb-4">
-                        <span className="text-base sm:text-lg font-extrabold text-[#17A398]">
-                          {fmtTZS(displayPrice)}
-                        </span>
-
-                        {selectedProduct.original_price && Number(selectedProduct.original_price) > Number(displayPrice) && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-gray-400 text-xs sm:text-sm line-through">
-                              {fmtTZS(selectedProduct.original_price)}
-                            </span>
-                            <span className="bg-red-100 text-red-600 text-[9px] sm:text-[10px] font-extrabold px-1.5 py-0.5 rounded">
-                              -{Math.round(((selectedProduct.original_price - displayPrice) / selectedProduct.original_price) * 100)}% OFF
-                            </span>
-                          </div>
+                      <p className="text-xs font-bold text-[#17A398] mb-4">
+                        {fmtTZS(displayPrice)}
+                        {variantPrice !== null && variantPrice !== selectedProduct.price && (
+                          <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
                         )}
-                      </div>
+                      </p>
                     </>
                   );
                 })()}
@@ -1541,7 +1243,7 @@ export default function Home() {
 
                 {modalVariants.types.length > 0 && (
                   <div className="mb-4">
-                    <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo:</label>
+                    <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo (mfano Watts, Voltage, 220V/Battery):</label>
                     <div className="flex gap-2 flex-wrap">
                       {modalVariants.types.map((tp) => (
                         <button
@@ -1577,62 +1279,39 @@ export default function Home() {
 
                 <button
                   onClick={handleAddToCartWithOptions}
-                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mb-4"
+                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
                 >
                   Weka Kikapuni 🛒
                 </button>
 
-                <div className="border-t border-gray-100 pt-3">
-                  <h4 className="text-xs font-bold text-[#12182B] mb-2 flex items-center justify-between">
-                    <span>⭐ Maoni ya Wateja ({productReviews.length})</span>
-                    <span className="text-[10px] text-yellow-600 font-bold">
-                      ★ {productReviews.length > 0 ? (productReviews.reduce((a, b) => a + Number(b.rating || 5), 0) / productReviews.length).toFixed(1) : "5.0"}
-                    </span>
-                  </h4>
-
-                  <div className="max-h-28 overflow-y-auto space-y-1.5 mb-3 pr-1">
-                    {productReviews.length === 0 ? (
-                      <p className="text-[10px] text-gray-400 italic">Kuwa wa kwanza kuweka maoni kuhusu bidhaa hii!</p>
-                    ) : (
-                      productReviews.map((rev) => (
-                        <div key={rev.id} className="p-2 bg-gray-50 rounded-lg text-xs">
-                          <div className="flex justify-between items-center mb-0.5">
-                            <span className="font-bold text-[#12182B]">{rev.customer_name}</span>
-                            <span className="text-yellow-500 font-bold text-[10px]">{"★".repeat(rev.rating || 5)}</span>
-                          </div>
-                          <p className="text-gray-600 text-[11px]">{rev.comment}</p>
-                        </div>
-                      ))
-                    )}
+                {/* VITUFE VYA KUSHARE BIDHAA */}
+                <div className="mt-4 pt-3 border-t border-gray-100 space-y-2">
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                    Sambaza Bidhaa Hii:
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleShareWhatsApp(selectedProduct)}
+                      className="bg-[#25D366] hover:bg-[#1ea952] text-white text-[11px] font-bold py-2 px-2 rounded-xl transition-colors"
+                    >
+                      💬 WhatsApp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleShareDevice(selectedProduct)}
+                      className="bg-[#12182B] hover:bg-[#1e2744] text-white text-[11px] font-bold py-2 px-2 rounded-xl transition-colors"
+                    >
+                      📤 Share
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(selectedProduct)}
+                      className="bg-gray-100 hover:bg-gray-200 text-[#12182B] text-[11px] font-bold py-2 px-2 rounded-xl transition-colors"
+                    >
+                      {copiedProductId === selectedProduct.id ? "✓ Imenakiliwa" : "🔗 Copy Link"}
+                    </button>
                   </div>
-
-                  <form onSubmit={handleAddReview} className="space-y-2">
-                    <div className="flex gap-2">
-                      <select
-                        value={newRating}
-                        onChange={(e) => setNewRating(Number(e.target.value))}
-                        className="px-2 py-1 border rounded-lg text-xs bg-white text-yellow-600 font-bold focus:outline-none"
-                      >
-                        <option value={5}>⭐⭐⭐⭐⭐ (5)</option>
-                        <option value={4}>⭐⭐⭐⭐ (4)</option>
-                        <option value={3}>⭐⭐⭐ (3)</option>
-                      </select>
-                      <input
-                        type="text"
-                        placeholder="Andika maoni yako hapa..."
-                        value={newComment}
-                        onChange={(e) => setNewComment(e.target.value)}
-                        className="flex-1 px-3 py-1 border rounded-lg text-xs focus:outline-none focus:border-[#17A398]"
-                      />
-                      <button
-                        type="submit"
-                        disabled={isSubmittingReview}
-                        className="bg-[#12182B] text-white px-3 py-1 rounded-lg text-xs font-bold hover:bg-[#17A398] transition-colors"
-                      >
-                        Tuma
-                      </button>
-                    </div>
-                  </form>
                 </div>
               </>
             )}
@@ -1642,21 +1321,9 @@ export default function Home() {
 
       {/* TRACKING MODAL */}
       {showTrackingModal && (
-        <div
-          onClick={closeTrackingModal}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto"
-          >
-            <button
-              onClick={closeTrackingModal}
-              className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors shadow-sm"
-              aria-label="Funga"
-            >
-              ✕
-            </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto">
+            <button onClick={closeTrackingModal} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
             <h3 className="text-base font-bold text-[#12182B] mb-3">📦 Fuatilia Mzigo Wako</h3>
             <p className="text-xs text-gray-500 mb-4">Weka namba ya simu uliyotumia wakati wa kuagiza, tutakuonyesha oda zako.</p>
 
@@ -1696,12 +1363,6 @@ export default function Home() {
                       </div>
                       <p className="text-gray-600">📍 {order.region}</p>
                       <p className="text-gray-600">💵 {fmtTZS(order.total)}</p>
-                      {order.transport_method && (
-                        <p className="text-gray-600">🚚 Njia ya Usafiri: <strong>{order.transport_method}</strong></p>
-                      )}
-                      {order.status_note && (
-                        <p className="text-[#0B5852] font-medium mt-1">📝 {order.status_note}</p>
-                      )}
                       <p className="text-gray-400 text-[10px] mt-1 mb-2">
                         {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
                       </p>
@@ -1778,7 +1439,7 @@ export default function Home() {
                 </h3>
                 <button
                   onClick={() => (checkoutStatus === "success" ? closeCheckoutSuccess() : setShowCartDrawer(false))}
-                  className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors"
+                  className="text-gray-400 font-bold hover:text-black"
                 >
                   ✕
                 </button>
@@ -1901,9 +1562,7 @@ export default function Home() {
                     <div className="pt-3 border-t border-gray-100 space-y-2">
                       <div className="flex justify-between items-center text-sm font-extrabold">
                         <span>Jumla Kuu:</span>
-                        <span className="text-[#17A398] text-base">
-                          {fmtTZS(cart.reduce((s, i) => s + i.price * (i.qty || 1), 0))}
-                        </span>
+                        <span className="text-[#17A398] text-base">{fmtTZS(cartTotal)}</span>
                       </div>
                       <button
                         type="submit"
