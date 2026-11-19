@@ -82,6 +82,33 @@ const MIKOA = [
   "Mtwara", "Lindi", "Shinyanga", "Kagera (Bukoba)", "Mara (Musoma)"
 ];
 
+const SOURCING_TYPES = [
+  {
+    id: "dsm_ndogo",
+    label: "Mzigo Mdogo / Kawaida (Dar es Salaam)",
+    desc: "Kariakoo / DSM • Ada ya huduma 25,000 TZS",
+  },
+  {
+    id: "biashara_mkubwa",
+    label: "Mzigo Mkubwa / Wa Biashara",
+    desc: "Mashine, vifaa vingi au jumla • Ada ya huduma 60,000 TZS",
+  },
+  {
+    id: "nje_ya_nchi",
+    label: "Kuagiza Nje ya Nchi (China / USA / Dubai)",
+    desc: "50,000 TZS (< 300,000 TZS) au 70,000 TZS (≥ 300,000 TZS)",
+  },
+];
+
+function calculateCustomServiceFee(sourcingType, estimatedCost) {
+  const cost = Number(estimatedCost) || 0;
+  if (sourcingType === "biashara_mkubwa") return 60000;
+  if (sourcingType === "nje_ya_nchi") {
+    return cost >= 300000 ? 70000 : 50000;
+  }
+  return 25000;
+}
+
 const TRANSPORT_ROUTES = [
   { flag: "🇨🇳", name: "China → Dar es Salaam", days: "Siku 7 - 14 (Air Cargo)", progress: "75%" },
   { flag: "🇺🇸", name: "USA → Dar es Salaam", days: "Siku 10 - 14 (Express)", progress: "60%" },
@@ -256,6 +283,17 @@ export default function Home() {
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
+
+  // CUSTOM REQUEST ("AGIZA KITU WHATSAPP") MODAL STATES
+  const [showCustomRequestModal, setShowCustomRequestModal] = useState(false);
+  const [reqName, setReqName] = useState("");
+  const [reqPhone, setReqPhone] = useState("");
+  const [reqMkoa, setReqMkoa] = useState("Dar es Salaam");
+  const [reqSourcingType, setReqSourcingType] = useState("dsm_ndogo");
+  const [reqProductDetails, setReqProductDetails] = useState("");
+  const [reqEstimatedCost, setReqEstimatedCost] = useState("");
+  const [reqSubmitting, setReqSubmitting] = useState(false);
+  const [reqSuccessMsg, setReqSuccessMsg] = useState("");
 
   const [productReviews, setProductReviews] = useState([]);
   const [newComment, setNewComment] = useState("");
@@ -459,6 +497,64 @@ export default function Home() {
     }
   };
 
+  const handleCustomRequestSubmit = async (e) => {
+    e.preventDefault();
+    if (!reqProductDetails.trim() || reqSubmitting) return;
+    setReqSubmitting(true);
+    setReqSuccessMsg("");
+
+    const estCost = Number(reqEstimatedCost) || 0;
+    const serviceFee = calculateCustomServiceFee(reqSourcingType, estCost);
+    const sourcingLabel =
+      SOURCING_TYPES.find((s) => s.id === reqSourcingType)?.label || reqSourcingType;
+
+    try {
+      if (supabase) {
+        const { error } = await supabase.from("custom_requests").insert([
+          {
+            customer_name: reqName.trim() || "Mteja",
+            customer_phone: reqPhone.trim(),
+            region: reqMkoa,
+            sourcing_type: sourcingLabel,
+            product_details: reqProductDetails.trim(),
+            estimated_product_cost: estCost,
+            service_fee: serviceFee,
+            amount_paid: 0,
+            payment_status: "hajalipa",
+            status: "pending",
+            transport_method: "",
+            status_note: "",
+          },
+        ]);
+        if (error) {
+          console.error("custom_requests insert error:", error);
+        }
+      }
+    } catch (err) {
+      console.error("custom_requests submit error:", err);
+    }
+
+    const msg =
+      `🛍️ *OMBI MAALUM LA KUAGIZIWA KITU (ISHI KIDIJITALI)*\n\n` +
+      `👤 *Mteja:* ${reqName.trim() || "Bila Jina"}\n` +
+      `📞 *Simu:* ${reqPhone.trim() || "Haijawekwa"}\n` +
+      `📍 *Mkoa:* ${reqMkoa}\n` +
+      `📦 *Aina ya Agizo:* ${sourcingLabel}\n` +
+      `📝 *Bidhaa / Kifaa Kinachotakiwa:*\n${reqProductDetails.trim()}\n\n` +
+      `💰 *Makadirio ya Bidhaa:* ${fmtTZS(estCost)}\n` +
+      `🧾 *Ada ya Huduma (Service Fee):* ${fmtTZS(serviceFee)}\n` +
+      `💵 *Jumla ya Makadirio (Bidhaa + Service Fee):* ${fmtTZS(estCost + serviceFee)}\n\n` +
+      `Tafadhali nisaidie kunithibitishia upatikanaji, usafiri, na hatua zinazofuata.`;
+
+    window.open(
+      `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`,
+      "_blank"
+    );
+
+    setReqSuccessMsg("Ombi lako limetumwa kwenye WhatsApp na kuhifadhiwa!");
+    setReqSubmitting(false);
+  };
+
   const handleWhatsAppCheckout = async (e) => {
     e.preventDefault();
     if (cart.length === 0 || checkoutStatus === "submitting") return;
@@ -495,7 +591,6 @@ export default function Home() {
       }))
     );
 
-    let orderInsertError = null;
     let insertedOrder = null;
     try {
       if (supabase) {
@@ -513,20 +608,17 @@ export default function Home() {
               ref_code: activeRefCode || null,
               commission_total: activeRefCode ? Math.round(totalCommission) : 0,
               status: "pending",
-            }
+            },
           ])
           .select()
           .single();
-        if (error) orderInsertError = error;
+        if (error) {
+          console.error("Supabase order error:", error);
+        }
         insertedOrder = data;
       }
     } catch (err) {
-      orderInsertError = err;
-    }
-
-    if (orderInsertError) {
-      console.error("Supabase order error:", orderInsertError);
-      alert("Kuna tatizo la kuhifadhi oda Supabase (ingawa WhatsApp itafunguka). Tafadhali mwambie msimamizi: " + (orderInsertError.message || "unknown error"));
+      console.error("Supabase order exception:", err);
     }
 
     setLastOrder({
@@ -645,7 +737,6 @@ export default function Home() {
   };
 
   const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
-  const cartTotal = cart ? cart.reduce((s, i) => s + i.price * (i.qty || 1), 0) : 0;
   const filteredProducts = products.filter((p) => {
     if (category === "wote") return true;
     const pc = (p.category || "").toString().trim().toLowerCase();
@@ -656,6 +747,9 @@ export default function Home() {
 
   const modalImages = selectedProduct ? getProductImages(selectedProduct) : [];
   const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [], options: {} };
+
+  const computedServiceFee = calculateCustomServiceFee(reqSourcingType, reqEstimatedCost);
+  const computedEstTotal = (Number(reqEstimatedCost) || 0) + computedServiceFee;
 
   return (
     <main className="bg-[#F7F3EA] min-h-screen relative text-[#12182B]">
@@ -727,9 +821,16 @@ export default function Home() {
               Tafuta bidhaa au mashine yoyote - tunakununulia kutoka sokoni Kariakoo au Nje ya Nchi na kukuletea mkoani kwako kwa usalama.
             </p>
             <div className="flex flex-wrap gap-3">
-              <a href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nataka kuagiza bidhaa/kifaa.")}`} target="_blank" rel="noreferrer" className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  setReqSuccessMsg("");
+                  setShowCustomRequestModal(true);
+                }}
+                className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg"
+              >
                 Agiza Kitu WhatsApp
-              </a>
+              </button>
               <Link href="/wasambazaji" className="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl font-semibold text-xs border border-white/20 transition-colors">
                 Jiunge Kama Msambazaji
               </Link>
@@ -949,15 +1050,14 @@ export default function Home() {
               const images = getProductImages(p);
               return (
                 <div key={p.id} className="bg-white border border-[#E4DFD2] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all">
-                  <div 
-                    onClick={() => handleOpenProductModal(p)} 
-                    className="h-40 sm:h-52 bg-[#F0FAF8] relative flex items-center justify-center p-2 cursor-pointer group"
+                  <div
+                    onClick={() => handleOpenProductModal(p)}
+                    className="aspect-square w-full bg-[#F0FAF8] relative flex items-center justify-center p-2.5 cursor-pointer group overflow-hidden"
                   >
                     <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#17A398] text-white text-[9px] sm:text-[10px] font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full z-10">
                       {p.origin || "DSM / China"}
                     </span>
 
-                    {/* BADGE YA PUNGUZO / OFFER KAMAP.ORIGINAL_PRICE IPO */}
                     {p.original_price && Number(p.original_price) > Number(p.price) && (
                       <span className="absolute bottom-2 left-2 bg-red-600 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-md z-10">
                         -{Math.round(((p.original_price - p.price) / p.original_price) * 100)}% OFF
@@ -970,7 +1070,7 @@ export default function Home() {
                       </span>
                     )}
                     {images.length > 0 ? (
-                      <img src={images[0]} alt={p.name} className="h-full object-contain group-hover:scale-105 transition-transform duration-300" />
+                      <img src={images[0]} alt={p.name} className="w-full h-full object-contain rounded-lg group-hover:scale-105 transition-transform duration-300" />
                     ) : (
                       <span className="text-4xl sm:text-5xl">{p.emoji || "📦"}</span>
                     )}
@@ -1115,19 +1215,171 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* PRODUCT VARIATION MODAL */}
-      {selectedProduct && (
-        <div 
-          onClick={() => setSelectedProduct(null)} 
+      {/* CUSTOM REQUEST ("AGIZA KITU WHATSAPP") MODAL */}
+      {showCustomRequestModal && (
+        <div
+          onClick={() => setShowCustomRequestModal(false)}
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
         >
-          <div 
-            onClick={(e) => e.stopPropagation()} 
+          <div
+            onClick={(e) => e.stopPropagation()}
             className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto"
           >
-            {/* KITUFE CHA 'X' KIKUBWA NA RAHISI KUBONYEZA */}
-            <button 
-              onClick={() => setSelectedProduct(null)} 
+            <button
+              onClick={() => setShowCustomRequestModal(false)}
+              className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors"
+              aria-label="Funga"
+            >
+              ✕
+            </button>
+
+            <h3 className="text-base font-bold text-[#12182B] mb-1">🛍️ Agiza Kitu WhatsApp</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Tuambie bidhaa au mashine unayotaka kutoka DSM, China, USA au Dubai. Ada ya huduma inakokotolewa kiotomatiki.
+            </p>
+
+            <form onSubmit={handleCustomRequestSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold block mb-1">Jina Kamili:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Mfano: Juma Ally"
+                  value={reqName}
+                  onChange={(e) => setReqName(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="font-bold block mb-1">Simu (WhatsApp):</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="0754XXXXXX"
+                    value={reqPhone}
+                    onChange={(e) => setReqPhone(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold block mb-1">Mkoa:</label>
+                  <select
+                    value={reqMkoa}
+                    onChange={(e) => setReqMkoa(e.target.value)}
+                    className="w-full px-2 py-2 border rounded-xl bg-white font-semibold focus:outline-none focus:border-[#17A398]"
+                  >
+                    {MIKOA.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold block mb-1">Chagua Aina ya Agizo / Service Fee:</label>
+                <div className="space-y-2">
+                  {SOURCING_TYPES.map((st) => (
+                    <label
+                      key={st.id}
+                      className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-colors ${
+                        reqSourcingType === st.id
+                          ? "bg-[#17A398]/10 border-[#17A398]"
+                          : "bg-gray-50 border-gray-200"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sourcingType"
+                        value={st.id}
+                        checked={reqSourcingType === st.id}
+                        onChange={(e) => setReqSourcingType(e.target.value)}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <p className="font-bold text-[#12182B]">{st.label}</p>
+                        <p className="text-[10px] text-gray-500">{st.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold block mb-1">Makadirio ya Bei ya Bidhaa (TZS):</label>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Mfano: 250000 au 450000"
+                  value={reqEstimatedCost}
+                  onChange={(e) => setReqEstimatedCost(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
+                />
+                {reqSourcingType === "nje_ya_nchi" && (
+                  <p className="text-[10px] text-[#0B5852] font-semibold mt-1">
+                    Nje ya nchi: Chini ya 300,000 TZS = 50,000 TZS | 300,000 TZS au zaidi = 70,000 TZS.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="font-bold block mb-1">Maelezo ya Bidhaa / Kifaa Unachotaka:</label>
+                <textarea
+                  rows={3}
+                  required
+                  placeholder="Eleza jina la bidhaa, model, idadi, rangi/uwezo, au link kama unayo..."
+                  value={reqProductDetails}
+                  onChange={(e) => setReqProductDetails(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:border-[#17A398]"
+                />
+              </div>
+
+              <div className="bg-[#F7F3EA] p-3 rounded-xl space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Makadirio ya Bidhaa:</span>
+                  <span className="font-bold">{fmtTZS(Number(reqEstimatedCost) || 0)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Ada ya Huduma (Service Fee):</span>
+                  <span className="font-extrabold text-[#17A398]">{fmtTZS(computedServiceFee)}</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-black/10 font-extrabold text-sm">
+                  <span>Jumla ya Makadirio:</span>
+                  <span>{fmtTZS(computedEstTotal)}</span>
+                </div>
+              </div>
+
+              {reqSuccessMsg && (
+                <p className="text-xs font-bold text-green-600 bg-green-50 p-2 rounded-lg">
+                  ✅ {reqSuccessMsg}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={reqSubmitting}
+                className="w-full bg-[#25D366] hover:bg-[#1ea952] disabled:opacity-60 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow"
+              >
+                {reqSubmitting ? "⏳ Inatuma..." : "💬 Tuma Ombi WhatsApp"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PRODUCT VARIATION MODAL */}
+      {selectedProduct && (
+        <div
+          onClick={() => setSelectedProduct(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto"
+          >
+            <button
+              onClick={() => setSelectedProduct(null)}
               className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors shadow-sm"
               aria-label="Funga"
             >
@@ -1176,12 +1428,12 @@ export default function Home() {
                       {(displayImage || modalImages.length > 0) && (
                         <div className="mb-4">
                           <div
-                            className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden select-none touch-pan-y relative"
+                            className="h-52 sm:h-60 w-full bg-[#F0FAF8] rounded-xl flex items-center justify-center p-2 overflow-hidden select-none touch-pan-y relative"
                             onTouchStart={handleSwipeStart}
                             onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, modalImages.length, modalGalleryIdx, setModalGalleryIdx)}
                           >
                             {displayImage ? (
-                              <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain pointer-events-none" draggable={false} />
+                              <img src={displayImage} alt={selectedProduct.name} className="w-full h-full object-contain rounded-lg pointer-events-none" draggable={false} />
                             ) : null}
                           </div>
                           {!variantImage && modalImages.length > 1 && (
@@ -1199,8 +1451,7 @@ export default function Home() {
                       )}
 
                       <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-                      
-                      {/* MAELEZO YA BIDHAA (FORMATTED DESCRIPTION) */}
+
                       <div className="mb-3 bg-gray-50 border border-gray-100 p-3 rounded-xl">
                         <h4 className="text-[11px] font-bold text-[#12182B] mb-1.5 uppercase tracking-wider flex items-center gap-1">
                           <span>📝</span> Sifa & Maelezo:
@@ -1216,7 +1467,6 @@ export default function Home() {
                         </ul>
                       </div>
 
-                      {/* WARANTI & DHAMANA (FROM SUPABASE WARRANTY_INFO) */}
                       <div className="mb-3 p-3 bg-[#17A398]/10 border border-[#17A398]/20 rounded-xl flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="text-xl">🛡️</span>
@@ -1232,7 +1482,6 @@ export default function Home() {
                         </span>
                       </div>
 
-                      {/* BEI MBILI (OFFER PRICE & ORIGINAL PRICE) */}
                       <div className="flex items-center gap-2 mb-4">
                         <span className="text-base sm:text-lg font-extrabold text-[#17A398]">
                           {fmtTZS(displayPrice)}
@@ -1333,7 +1582,6 @@ export default function Home() {
                   Weka Kikapuni 🛒
                 </button>
 
-                {/* REVIEWS & MAONI YA WATEJA */}
                 <div className="border-t border-gray-100 pt-3">
                   <h4 className="text-xs font-bold text-[#12182B] mb-2 flex items-center justify-between">
                     <span>⭐ Maoni ya Wateja ({productReviews.length})</span>
@@ -1394,16 +1642,16 @@ export default function Home() {
 
       {/* TRACKING MODAL */}
       {showTrackingModal && (
-        <div 
-          onClick={closeTrackingModal} 
+        <div
+          onClick={closeTrackingModal}
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
         >
-          <div 
-            onClick={(e) => e.stopPropagation()} 
+          <div
+            onClick={(e) => e.stopPropagation()}
             className="bg-white w-full max-w-sm rounded-2xl p-6 relative shadow-2xl max-h-[85vh] overflow-y-auto"
           >
-            <button 
-              onClick={closeTrackingModal} 
+            <button
+              onClick={closeTrackingModal}
               className="absolute top-3 right-3 z-20 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-black font-extrabold text-base transition-colors shadow-sm"
               aria-label="Funga"
             >
@@ -1448,6 +1696,12 @@ export default function Home() {
                       </div>
                       <p className="text-gray-600">📍 {order.region}</p>
                       <p className="text-gray-600">💵 {fmtTZS(order.total)}</p>
+                      {order.transport_method && (
+                        <p className="text-gray-600">🚚 Njia ya Usafiri: <strong>{order.transport_method}</strong></p>
+                      )}
+                      {order.status_note && (
+                        <p className="text-[#0B5852] font-medium mt-1">📝 {order.status_note}</p>
+                      )}
                       <p className="text-gray-400 text-[10px] mt-1 mb-2">
                         {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
                       </p>
@@ -1647,7 +1901,9 @@ export default function Home() {
                     <div className="pt-3 border-t border-gray-100 space-y-2">
                       <div className="flex justify-between items-center text-sm font-extrabold">
                         <span>Jumla Kuu:</span>
-                        <span className="text-[#17A398] text-base">{fmtTZS(cartTotal)}</span>
+                        <span className="text-[#17A398] text-base">
+                          {fmtTZS(cart.reduce((s, i) => s + i.price * (i.qty || 1), 0))}
+                        </span>
                       </div>
                       <button
                         type="submit"

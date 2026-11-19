@@ -26,6 +26,44 @@ const PAYMENT_STATUS_OPTIONS = [
   { value: "amelipa_kamili", label: "✅ Amelipa Kamili" },
 ];
 
+const TRANSPORT_METHODS = [
+  "",
+  "Air Cargo (Ndege)",
+  "Sea Cargo (Meli)",
+  "Basi / Express Mikoani",
+  "Bodaboda / Pickup Dar es Salaam",
+];
+
+function getDefaultStatusNote(status, order, transportMethod = "") {
+  const destination = order?.region || "mkoa wako";
+  const viaTransport = transportMethod ? ` kupitia ${transportMethod}` : "";
+
+  switch (status) {
+    case "pending":
+      return `Oda yako imepokelewa. Tunakagua taarifa na kuandaa hatua ya ununuzi/usafirishaji.`;
+    case "inasindikwa":
+      return `Tupo kwenye mchakato wa kutafuta na kuandaa oda yako${viaTransport} kwa ubora unaotakiwa.`;
+    case "imenunuliwa":
+      return `Mzigo wako umenunuliwa kikamilifu na sasa unaandaliwa kwa ajili ya kusafirishwa${viaTransport}.`;
+    case "inasafirishwa_nje":
+      return `Mzigo wako uko safarini kuelekea Tanzania${viaTransport}. Tutakupa taarifa ukifika forodha/DSM.`;
+    case "forodha_dsm":
+      return `Mzigo wako uko hatua ya forodha na ukaguzi Dar es Salaam kabla ya kuendelea na safari.`;
+    case "imefika_dsm":
+      return `Mzigo wako umefika salama Dar es Salaam. Tunaandaa utaratibu wa kukufikishia (${destination}).`;
+    case "inasafirishwa_mkoani":
+      return `Mzigo wako umepakiwa na upo safarini kuelekea ${destination}${viaTransport}.`;
+    case "imefika_mkoani":
+      return `Mzigo wako umefika (${destination}). Tafadhali wasiliana nasi kwa ajili ya kuchukua au kupokea.`;
+    case "delivered":
+      return `Mzigo wako umekabidhiwa salama. Asante sana kwa kuamini Ishi Kidijitali!`;
+    case "cancelled":
+      return `Oda hii imeghairiwa. Wasiliana nasi WhatsApp iwapo unahitaji msaada au kuweka oda mpya.`;
+    default:
+      return `Hali ya oda yako imesasishwa.`;
+  }
+}
+
 function paymentStatusLabel(value) {
   const found = PAYMENT_STATUS_OPTIONS.find((s) => s.value === value);
   return found ? found.label : "❌ Hajalipa";
@@ -60,10 +98,15 @@ function statusColor(value) {
     case "cancelled":
       return "bg-red-100 text-red-700";
     case "inasafirishwa":
+    case "inasafirishwa_nje":
+    case "inasafirishwa_mkoani":
       return "bg-blue-100 text-blue-700";
     case "imefika_mkoani":
+    case "imefika_dsm":
       return "bg-purple-100 text-purple-700";
     case "inasindikwa":
+    case "imenunuliwa":
+    case "forodha_dsm":
       return "bg-amber-100 text-amber-700";
     default:
       return "bg-gray-100 text-gray-700";
@@ -78,6 +121,14 @@ function parseItems(itemsRaw) {
   } catch {
     return [];
   }
+}
+
+function formatPhoneForWhatsApp(rawPhone) {
+  const digits = String(rawPhone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("255")) return digits;
+  if (digits.startsWith("0")) return "255" + digits.slice(1);
+  return "255" + digits;
 }
 
 function orderToReceiptShape(order) {
@@ -114,6 +165,12 @@ export default function AdminPage() {
   const [loadError, setLoadError] = useState("");
   const [updatingId, setUpdatingId] = useState(null);
 
+  const [orderDetailsDrafts, setOrderDetailsDrafts] = useState({});
+  const [savingDetailsId, setSavingDetailsId] = useState(null);
+
+  const [customRequests, setCustomRequests] = useState([]);
+  const [showCustomRequestsPanel, setShowCustomRequestsPanel] = useState(true);
+
   const [statusFilter, setStatusFilter] = useState("wote");
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedId, setExpandedId] = useState(null);
@@ -140,7 +197,7 @@ export default function AdminPage() {
   const [prodImage, setProdImage] = useState("");
   const [prodDesc, setProdDesc] = useState("");
   const [variantOptions, setVariantOptions] = useState([
-    { label: "Uwezo / Watts", list: [{ name: "500W", price: "" }, { name: "800W", price: "" }] }
+    { label: "Uwezo / Watts", list: [{ name: "500W", price: "" }, { name: "800W", price: "" }] },
   ]);
   const [savingProduct, setSavingProduct] = useState(false);
 
@@ -154,9 +211,51 @@ export default function AdminPage() {
   useEffect(() => {
     if (!authenticated) return;
     loadOrders();
+    loadCustomRequests();
     loadAffiliates();
     loadProducts();
   }, [authenticated]);
+
+  function initOrderDrafts(rows) {
+    const drafts = {};
+    (rows || []).forEach((o) => {
+      const transport = o.transport_method || "";
+      drafts[o.id] = {
+        amount_paid: o.amount_paid ?? 0,
+        transport_method: transport,
+        status_note: o.status_note || getDefaultStatusNote(o.status || "pending", o, transport),
+      };
+    });
+    setOrderDetailsDrafts(drafts);
+  }
+
+  async function loadCustomRequests() {
+    try {
+      const { data, error } = await supabase
+        .from("custom_requests")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setCustomRequests(data || []);
+    } catch (err) {
+      console.error("Load custom_requests error:", err);
+    }
+  }
+
+  async function handleCustomRequestStatus(reqId, newStatus) {
+    try {
+      const { error } = await supabase
+        .from("custom_requests")
+        .update({ status: newStatus })
+        .eq("id", reqId);
+      if (error) throw error;
+      setCustomRequests((prev) =>
+        prev.map((r) => (r.id === reqId ? { ...r, status: newStatus } : r))
+      );
+    } catch (err) {
+      console.error("Update custom request status error:", err);
+    }
+  }
 
   async function loadAffiliates() {
     try {
@@ -215,7 +314,6 @@ export default function AdminPage() {
     }
   }
 
-  // EDITS / ADDS PRODUCTS & VARIANTS
   const handleEditProductClick = (p) => {
     setEditingProduct(p);
     setProdName(p.name || "");
@@ -235,7 +333,7 @@ export default function AdminPage() {
     if (parsedVariants.options && Object.keys(parsedVariants.options).length > 0) {
       const opts = Object.entries(parsedVariants.options).map(([label, list]) => ({
         label,
-        list: Array.isArray(list) ? list.map(v => typeof v === 'string' ? { name: v, price: "" } : v) : []
+        list: Array.isArray(list) ? list.map((v) => (typeof v === "string" ? { name: v, price: "" } : v)) : [],
       }));
       setVariantOptions(opts);
     } else {
@@ -260,10 +358,12 @@ export default function AdminPage() {
     const optionsObj = {};
     variantOptions.forEach((opt) => {
       if (opt.label && opt.list.length > 0) {
-        optionsObj[opt.label] = opt.list.filter(item => item.name.trim() !== "").map(item => ({
-          name: item.name,
-          price: item.price !== "" && item.price !== null ? Number(item.price) : null
-        }));
+        optionsObj[opt.label] = opt.list
+          .filter((item) => item.name.trim() !== "")
+          .map((item) => ({
+            name: item.name,
+            price: item.price !== "" && item.price !== null ? Number(item.price) : null,
+          }));
       }
     });
 
@@ -371,6 +471,15 @@ export default function AdminPage() {
             });
           }
           setOrders((prev) => [newOrder, ...prev]);
+          const transport = newOrder.transport_method || "";
+          setOrderDetailsDrafts((prev) => ({
+            ...prev,
+            [newOrder.id]: {
+              amount_paid: newOrder.amount_paid ?? 0,
+              transport_method: transport,
+              status_note: newOrder.status_note || getDefaultStatusNote(newOrder.status || "pending", newOrder, transport),
+            },
+          }));
         }
       )
       .subscribe();
@@ -390,6 +499,7 @@ export default function AdminPage() {
         .order("created_at", { ascending: false });
       if (error) throw error;
       setOrders(data || []);
+      initOrderDrafts(data || []);
     } catch (err) {
       console.error("Admin load orders error:", err);
       setLoadError("Imeshindwa kupakia oda. Tafadhali jaribu tena.");
@@ -421,15 +531,30 @@ export default function AdminPage() {
 
   async function handleStatusChange(orderId, newStatus) {
     setUpdatingId(orderId);
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const currentTransport =
+      orderDetailsDrafts[orderId]?.transport_method ?? targetOrder?.transport_method ?? "";
+    const autoNote = getDefaultStatusNote(newStatus, targetOrder, currentTransport);
+
     try {
       const { error } = await supabase
         .from("orders")
-        .update({ status: newStatus })
+        .update({ status: newStatus, status_note: autoNote })
         .eq("id", orderId);
       if (error) throw error;
+
       setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+        prev.map((o) =>
+          o.id === orderId ? { ...o, status: newStatus, status_note: autoNote } : o
+        )
       );
+      setOrderDetailsDrafts((prev) => ({
+        ...prev,
+        [orderId]: {
+          ...(prev[orderId] || { amount_paid: targetOrder?.amount_paid ?? 0, transport_method: currentTransport }),
+          status_note: autoNote,
+        },
+      }));
     } catch (err) {
       console.error("Status update error:", err);
       alert("Imeshindwa kubadilisha status: " + (err.message || "unknown error"));
@@ -438,23 +563,121 @@ export default function AdminPage() {
     }
   }
 
+  function handleApplyDefaultStatusNote(order) {
+    const currentStatus = order.status || "pending";
+    const currentTransport =
+      orderDetailsDrafts[order.id]?.transport_method ?? order.transport_method ?? "";
+    const nextNote = getDefaultStatusNote(currentStatus, order, currentTransport);
+
+    setOrderDetailsDrafts((prev) => ({
+      ...prev,
+      [order.id]: {
+        ...(prev[order.id] || { amount_paid: order.amount_paid ?? 0, transport_method: currentTransport }),
+        status_note: nextNote,
+      },
+    }));
+  }
+
   async function handlePaymentStatusChange(orderId, newPaymentStatus) {
     setUpdatingId(`pay-${orderId}`);
     try {
+      const currentOrder = orders.find((o) => o.id === orderId);
+      const nextAmountPaid =
+        newPaymentStatus === "amelipa_kamili" && (Number(orderDetailsDrafts[orderId]?.amount_paid) || 0) === 0
+          ? Number(currentOrder?.total) || 0
+          : Number(orderDetailsDrafts[orderId]?.amount_paid) || 0;
+
       const { error } = await supabase
         .from("orders")
-        .update({ payment_status: newPaymentStatus })
+        .update({ payment_status: newPaymentStatus, amount_paid: nextAmountPaid })
         .eq("id", orderId);
       if (error) throw error;
+
       setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, payment_status: newPaymentStatus } : o))
+        prev.map((o) =>
+          o.id === orderId
+            ? { ...o, payment_status: newPaymentStatus, amount_paid: nextAmountPaid }
+            : o
+        )
       );
+      setOrderDetailsDrafts((prev) => ({
+        ...prev,
+        [orderId]: {
+          ...(prev[orderId] || {}),
+          amount_paid: nextAmountPaid,
+        },
+      }));
     } catch (err) {
       console.error("Payment status update error:", err);
       alert("Imeshindwa kubadilisha hali ya malipo: " + (err.message || "unknown error"));
     } finally {
       setUpdatingId(null);
     }
+  }
+
+  async function handleSaveOrderDetails(orderId) {
+    setSavingDetailsId(orderId);
+    try {
+      const draft = orderDetailsDrafts[orderId] || {};
+      const amountPaid = Number(draft.amount_paid) || 0;
+      const transportMethod = draft.transport_method || "";
+      const statusNote = draft.status_note || "";
+
+      const { error } = await supabase
+        .from("orders")
+        .update({
+          amount_paid: amountPaid,
+          transport_method: transportMethod,
+          status_note: statusNote,
+        })
+        .eq("id", orderId);
+      if (error) throw error;
+
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                amount_paid: amountPaid,
+                transport_method: transportMethod,
+                status_note: statusNote,
+              }
+            : o
+        )
+      );
+      alert("Taarifa za mzigo na malipo zimehifadhiwa!");
+    } catch (err) {
+      console.error("Save order details error:", err);
+      alert("Imeshindwa kuhifadhi taarifa: " + (err.message || "unknown error"));
+    } finally {
+      setSavingDetailsId(null);
+    }
+  }
+
+  function buildProgressWhatsAppUrl(order) {
+    const phone = formatPhoneForWhatsApp(order.customer_phone);
+    if (!phone) return null;
+    const draft = orderDetailsDrafts[order.id] || {};
+    const transport = draft.transport_method || order.transport_method || "Haijatajwa bado";
+    const note =
+      draft.status_note ||
+      order.status_note ||
+      getDefaultStatusNote(order.status || "pending", order, transport);
+    const paidAmt = Number(draft.amount_paid ?? order.amount_paid) || 0;
+    const cleanStatus = statusLabel(order.status).replace(/[^\w\s()/-]/g, "").trim();
+    const cleanPay = paymentStatusLabel(order.payment_status).replace(/[^\w\s()/-]/g, "").trim();
+
+    const text =
+      `📦 *TAARIFA YA MZIGO WAKO — ISHI KIDIJITALI*\n\n` +
+      `Habari ${order.customer_name || "Mteja"},\n` +
+      `Oda *#${order.id}* iko kwenye hatua ya: *${cleanStatus}*\n` +
+      `🚚 *Njia ya Usafiri:* ${transport}\n` +
+      `💳 *Hali ya Malipo:* ${cleanPay}\n` +
+      `💰 *Kiasi Kilicholipwa:* ${fmtTZS(paidAmt)} / ${fmtTZS(order.total)}\n` +
+      `📝 *Maelezo:* ${note}\n\n` +
+      `Asante kwa kuchagua Ishi Kidijitali!`;
+
+    return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
   }
 
   const filteredOrders = orders.filter((o) => {
@@ -471,6 +694,16 @@ export default function AdminPage() {
   const totalRevenue = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const totalOrders = orders.length;
   const totalItemsSold = orders.reduce((sum, o) => sum + parseItems(o.items).reduce((s, it) => s + (it.qty || 1), 0), 0);
+
+  const paidOrPromisedCount = orders.filter((o) =>
+    ["amelipa_kamili", "amelipa_kidogo", "atalipa_mzigo_ukifika"].includes(o.payment_status)
+  ).length;
+
+  const collectedFunds = orders.reduce((sum, o) => {
+    if (Number(o.amount_paid) > 0) return sum + Number(o.amount_paid);
+    if (o.payment_status === "amelipa_kamili") return sum + (Number(o.total) || 0);
+    return sum;
+  }, 0);
 
   const refCodeStats = {};
   orders.forEach((o) => {
@@ -532,6 +765,104 @@ export default function AdminPage() {
       </header>
 
       <section className="max-w-4xl mx-auto px-4 py-5">
+        {/* MUHTASARI WA JUMLA */}
+        {!loading && orders.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Jumla ya Oda</p>
+              <p className="text-lg font-extrabold text-[#12182B]">{totalOrders}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Vitu Vilivyoagizwa</p>
+              <p className="text-lg font-extrabold text-[#12182B]">{totalItemsSold}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Waliolipa / Walioahidi</p>
+              <p className="text-lg font-extrabold text-blue-700">{paidOrPromisedCount}</p>
+            </div>
+            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Fedha Zilizokusanywa</p>
+              <p className="text-xs sm:text-sm font-extrabold text-green-700 mt-1">{fmtTZS(collectedFunds)}</p>
+            </div>
+            <div className="col-span-2 sm:col-span-1 bg-white border border-gray-200 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-gray-500 font-medium">Thamani ya Oda Zote</p>
+              <p className="text-xs sm:text-sm font-extrabold text-[#17A398] mt-1">{fmtTZS(totalRevenue)}</p>
+            </div>
+          </div>
+        )}
+
+        {/* MAOMBI MAALUM (AGIZA KITU WHATSAPP) */}
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5 shadow-sm">
+          <button
+            onClick={() => setShowCustomRequestsPanel((v) => !v)}
+            className="w-full flex items-center justify-between"
+          >
+            <p className="text-xs font-bold text-[#12182B]">
+              🛍️ Maombi ya "Agiza Kitu WhatsApp" ({customRequests.length})
+            </p>
+            <span className="text-gray-400 text-xs">{showCustomRequestsPanel ? "▲" : "▼"}</span>
+          </button>
+
+          {showCustomRequestsPanel && (
+            <div className="mt-3 space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              {customRequests.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-3">Hakuna maombi maalum bado.</p>
+              ) : (
+                customRequests.map((req) => {
+                  const estCost = Number(req.estimated_product_cost) || 0;
+                  const fee = Number(req.service_fee) || 0;
+                  const phone = formatPhoneForWhatsApp(req.customer_phone);
+                  return (
+                    <div key={req.id} className="border border-gray-100 bg-[#F7F9FC] rounded-xl p-3 text-xs space-y-1.5">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <p className="font-bold text-[#12182B]">
+                            #{req.id} • {req.customer_name || "Mteja"} ({req.customer_phone || "—"})
+                          </p>
+                          <p className="text-[10px] text-gray-500">
+                            📍 {req.region || "—"} • {req.sourcing_type || "Agizo Maalum"}
+                          </p>
+                        </div>
+                        <select
+                          value={req.status || "pending"}
+                          onChange={(e) => handleCustomRequestStatus(req.id, e.target.value)}
+                          className="px-2 py-1 border rounded-lg text-[10px] font-bold bg-white"
+                        >
+                          {STATUS_OPTIONS.map((s) => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <p className="text-gray-700 bg-white p-2 rounded-lg border border-gray-100">
+                        {req.product_details}
+                      </p>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <span>
+                          Makadirio: <strong>{fmtTZS(estCost)}</strong> + Fee:{" "}
+                          <strong className="text-[#17A398]">{fmtTZS(fee)}</strong> ={" "}
+                          <strong>{fmtTZS(estCost + fee)}</strong>
+                        </span>
+                        {phone && (
+                          <a
+                            href={`https://wa.me/${phone}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="bg-[#25D366] text-white font-bold px-2.5 py-1 rounded-lg text-[10px]"
+                          >
+                            💬 WhatsApp Mteja
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </div>
+
         {/* MANAGEMENT PANELS TOGGLE */}
         <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5 shadow-sm">
           <button
@@ -623,7 +954,6 @@ export default function AdminPage() {
                   />
                 </div>
 
-                {/* VARIANT BUILDER */}
                 <div className="pt-2 border-t border-gray-200">
                   <div className="flex justify-between items-center mb-2">
                     <label className="text-[11px] font-extrabold text-[#17A398]">
@@ -721,7 +1051,6 @@ export default function AdminPage() {
                 </div>
               </form>
 
-              {/* LIST OF PRODUCTS TO EDIT */}
               <div className="mt-4 space-y-2 max-h-60 overflow-y-auto">
                 <p className="text-[10px] font-bold text-gray-500 uppercase">Orodha ya Bidhaa Zilizopo (Bonyeza Kuedit):</p>
                 {products.map((p) => (
@@ -739,24 +1068,6 @@ export default function AdminPage() {
             </div>
           )}
         </div>
-
-        {/* MUHTASARI WA JUMLA */}
-        {!loading && orders.length > 0 && (
-          <div className="grid grid-cols-3 gap-2 mb-4">
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Jumla ya Oda</p>
-              <p className="text-lg font-extrabold text-[#12182B]">{totalOrders}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Bidhaa Zilizouzwa</p>
-              <p className="text-lg font-extrabold text-[#12182B]">{totalItemsSold}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Mapato Yote</p>
-              <p className="text-sm font-extrabold text-[#17A398]">{fmtTZS(totalRevenue)}</p>
-            </div>
-          </div>
-        )}
 
         {/* WASAMBAZAJI / LINK ZILIZOONGOZA KWA MAUZO */}
         {!loading && topAffiliates.length > 0 && (
@@ -949,6 +1260,13 @@ export default function AdminPage() {
             {filteredOrders.map((order) => {
               const items = parseItems(order.items);
               const isExpanded = expandedId === order.id;
+              const draft = orderDetailsDrafts[order.id] || {
+                amount_paid: order.amount_paid ?? 0,
+                transport_method: order.transport_method || "",
+                status_note: order.status_note || getDefaultStatusNote(order.status || "pending", order, order.transport_method || ""),
+              };
+              const progressWhatsAppUrl = buildProgressWhatsAppUrl(order);
+
               return (
                 <div key={order.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
@@ -963,37 +1281,54 @@ export default function AdminPage() {
                         {order.customer_name || "Bila Jina"} • {order.customer_phone || "—"}
                       </p>
                       <p className="text-xs text-gray-500">📍 {order.region || "—"}</p>
+                      {(order.transport_method || draft.transport_method) && (
+                        <p className="text-xs text-[#0B5852] font-semibold mt-0.5">
+                          🚚 {draft.transport_method || order.transport_method}
+                        </p>
+                      )}
                       <p className="text-[10px] text-gray-400 mt-1">
                         {order.created_at ? new Date(order.created_at).toLocaleString("sw-TZ") : ""}
                       </p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-extrabold text-[#17A398] text-sm">{fmtTZS(order.total)}</p>
+                      <p className="text-[10px] text-gray-500">
+                        Amelipa: <strong>{fmtTZS(Number(draft.amount_paid ?? order.amount_paid) || 0)}</strong>
+                      </p>
                       {order.ref_code && (
                         <p className="text-[10px] text-gray-400">Ref: {order.ref_code}</p>
                       )}
                     </div>
                   </div>
 
+                  {/* VITU VILIVYOAGIZWA (PREVIEW YA HARAKA) */}
+                  {items.length > 0 && (
+                    <div className="mt-2.5 bg-[#F7F3EA] rounded-xl p-2.5 text-xs">
+                      <p className="font-bold text-[#12182B] mb-1">
+                        🛒 Vitu Vilivyoagizwa ({items.reduce((s, it) => s + (it.qty || 1), 0)}):
+                      </p>
+                      <div className="space-y-0.5 text-gray-700">
+                        {items.map((it, i) => (
+                          <p key={i} className="text-[11px]">
+                            • {it.name}{" "}
+                            {it.size ? `[Size: ${it.size}]` : ""}{" "}
+                            {it.color ? `[Rangi: ${it.color}]` : ""}{" "}
+                            {it.type ? `[${it.type}]` : ""} — <strong>{it.qty || 1}x</strong> ({fmtTZS(it.price)})
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <button
                     onClick={() => setExpandedId(isExpanded ? null : order.id)}
                     className="text-[11px] text-[#17A398] font-semibold mt-2 underline"
                   >
-                    {isExpanded ? "Ficha maelezo" : "Ona bidhaa & maelezo zaidi"}
+                    {isExpanded ? "Ficha maelezo ya malipo" : "Ona mchanganuo wa malipo"}
                   </button>
 
                   {isExpanded && (
                     <div className="mt-3 pt-3 border-t border-gray-100 text-xs space-y-2">
-                      {items.length > 0 && (
-                        <div>
-                          <p className="font-bold text-gray-700 mb-1">Bidhaa:</p>
-                          {items.map((it, i) => (
-                            <p key={i} className="text-gray-600">
-                              • {it.name} {it.size ? `(Size: ${it.size})` : ""} {it.color ? `(Rangi: ${it.color})` : ""} {it.type ? `(${it.type})` : ""} — {it.qty} x {fmtTZS(it.price)}
-                            </p>
-                          ))}
-                        </div>
-                      )}
                       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-600">
                         <span>Bei ya Bidhaa:</span>
                         <span className="text-right">{fmtTZS(order.subtotal)}</span>
@@ -1011,49 +1346,155 @@ export default function AdminPage() {
                     </div>
                   )}
 
-                  <div className="mt-3 pt-3 border-t border-gray-100">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
-                      Badilisha Status (Usafirishaji):
-                    </label>
-                    <select
-                      value={order.status || "pending"}
-                      onChange={(e) => handleStatusChange(order.id, e.target.value)}
-                      disabled={updatingId === order.id}
-                      className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
-                    >
-                      {STATUS_OPTIONS.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                        Badilisha Status (Usafirishaji):
+                      </label>
+                      <select
+                        value={order.status || "pending"}
+                        onChange={(e) => handleStatusChange(order.id, e.target.value)}
+                        disabled={updatingId === order.id}
+                        className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
+                      >
+                        {STATUS_OPTIONS.map((s) => (
+                          <option key={s.value} value={s.value}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                        Hali ya Malipo:
+                      </label>
+                      <select
+                        value={order.payment_status || "hajalipa"}
+                        onChange={(e) => handlePaymentStatusChange(order.id, e.target.value)}
+                        disabled={updatingId === `pay-${order.id}`}
+                        className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
+                      >
+                        {PAYMENT_STATUS_OPTIONS.map((s) => (
+                          <option key={s.value} value={s.value}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="mt-2">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
-                      Hali ya Malipo:
-                    </label>
-                    <select
-                      value={order.payment_status || "hajalipa"}
-                      onChange={(e) => handlePaymentStatusChange(order.id, e.target.value)}
-                      disabled={updatingId === `pay-${order.id}`}
-                      className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold disabled:opacity-50"
-                    >
-                      {PAYMENT_STATUS_OPTIONS.map((s) => (
-                        <option key={s.value} value={s.value}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span className={`inline-block mt-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${paymentStatusColor(order.payment_status)}`}>
-                      {paymentStatusLabel(order.payment_status)}
-                    </span>
+                  {/* NJIA YA USAFIRISHAJI, KIASI KILICHOLIPWA & UJUMBE MAALUM WA HALI */}
+                  <div className="mt-3 pt-3 border-t border-gray-100 space-y-2 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                          Njia ya Usafiri:
+                        </label>
+                        <select
+                          value={draft.transport_method}
+                          onChange={(e) => {
+                            const nextTransport = e.target.value;
+                            const currentStatus = order.status || "pending";
+                            const prevAuto = getDefaultStatusNote(currentStatus, order, draft.transport_method);
+                            const shouldRefreshNote = !draft.status_note || draft.status_note === prevAuto;
+
+                            setOrderDetailsDrafts((prev) => ({
+                              ...prev,
+                              [order.id]: {
+                                ...draft,
+                                transport_method: nextTransport,
+                                status_note: shouldRefreshNote
+                                  ? getDefaultStatusNote(currentStatus, order, nextTransport)
+                                  : draft.status_note,
+                              },
+                            }));
+                          }}
+                          className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold"
+                        >
+                          {TRANSPORT_METHODS.map((tm) => (
+                            <option key={tm} value={tm}>
+                              {tm || "— Chagua Njia ya Usafiri —"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase block mb-1">
+                          Kiasi Kilicholipwa (TZS):
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={draft.amount_paid}
+                          onChange={(e) =>
+                            setOrderDetailsDrafts((prev) => ({
+                              ...prev,
+                              [order.id]: { ...draft, amount_paid: e.target.value },
+                            }))
+                          }
+                          className="w-full px-3 py-2 border rounded-xl text-xs bg-white font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase">
+                          Maelezo / Ujumbe wa Hali ya Mzigo:
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleApplyDefaultStatusNote(order)}
+                          className="text-[10px] font-bold text-[#17A398] hover:underline"
+                        >
+                          🔄 Weka Ujumbe wa Status Hii
+                        </button>
+                      </div>
+                      <textarea
+                        rows={2}
+                        placeholder="Ujumbe maalum kulingana na status ya mzigo..."
+                        value={draft.status_note}
+                        onChange={(e) =>
+                          setOrderDetailsDrafts((prev) => ({
+                            ...prev,
+                            [order.id]: { ...draft, status_note: e.target.value },
+                          }))
+                        }
+                        className="w-full px-3 py-2 border rounded-xl text-xs bg-white leading-relaxed"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${paymentStatusColor(order.payment_status)}`}>
+                        {paymentStatusLabel(order.payment_status)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveOrderDetails(order.id)}
+                        disabled={savingDetailsId === order.id}
+                        className="bg-[#12182B] hover:bg-[#17A398] disabled:opacity-50 text-white text-[11px] font-bold px-3.5 py-1.5 rounded-xl transition-colors"
+                      >
+                        {savingDetailsId === order.id ? "Inahifadhi..." : "💾 Hifadhi Taarifa za Mzigo & Malipo"}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+                    {progressWhatsAppUrl && (
+                      <a
+                        href={progressWhatsAppUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block text-center bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-2 rounded-xl transition-colors"
+                      >
+                        📲 Tuma Progress WhatsApp
+                      </a>
+                    )}
                     {order.customer_phone && (
                       <a
-                        href={`https://wa.me/255${order.customer_phone.replace(/^0/, "")}`}
+                        href={`https://wa.me/${formatPhoneForWhatsApp(order.customer_phone)}`}
                         target="_blank"
                         rel="noreferrer"
                         className="block text-center bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold py-2 rounded-xl transition-colors"
@@ -1063,7 +1504,7 @@ export default function AdminPage() {
                     )}
                     {order.ref_code && affiliatesMap[order.ref_code]?.phone && (
                       <a
-                        href={`https://wa.me/255${affiliatesMap[order.ref_code].phone.replace(/^0/, "")}?text=${encodeURIComponent(
+                        href={`https://wa.me/${formatPhoneForWhatsApp(affiliatesMap[order.ref_code].phone)}?text=${encodeURIComponent(
                           `Habari ${affiliatesMap[order.ref_code].full_name || "Msambazaji"}, kuhusu Oda #${order.id}: hali ya malipo ni "${paymentStatusLabel(order.payment_status).replace(/[^\w\s()]/g, "").trim()}".`
                         )}`}
                         target="_blank"
