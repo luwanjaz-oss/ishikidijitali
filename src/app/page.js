@@ -74,7 +74,6 @@ function getProductVariants(p) {
     return { sizes: [], colors: [], types: [], options: {} };
   }
 
-  // Kama variants imehifadhiwa kama Array moja kwa moja kwenye jsonb (mfano [{ name: "10W", price: 15000 }, ...])
   if (Array.isArray(v)) {
     const directList = normalizeVariantList(v);
     return {
@@ -93,7 +92,6 @@ function getProductVariants(p) {
     });
   }
 
-  // Soma funguo nyingine zozote za array kwenye variants (mfano watts, volts, capacity, model, categories)
   const reservedKeys = new Set(["sizes", "colors", "types", "options"]);
   Object.entries(v).forEach(([key, val]) => {
     if (!reservedKeys.has(key) && Array.isArray(val)) {
@@ -316,7 +314,7 @@ function ProductCard({ product, onShare, onOpenModal }) {
     const diff = e.changedTouches[0].clientX - touchStartX.current;
     if (Math.abs(diff) > 30) {
       if (diff < 0) setImgIdx((i) => (i + 1) % images.length);
-      else setImgIdx((i) => (i - 1 + images.length) % images.length);
+      else setImgIdx((i - 1 + images.length) % images.length);
     }
     touchStartX.current = null;
   }
@@ -810,6 +808,7 @@ export default function Home() {
         name: item.name,
         qty: item.qty || 1,
         price: item.price,
+        shipping_fee: Number(item.shipping_fee) || 0,
         size: item.selectedSize || null,
         color: item.selectedColor || null,
         type: item.selectedType || null,
@@ -883,6 +882,7 @@ export default function Home() {
     cart.forEach((item, index) => {
       const itemQty = item.qty || 1;
       const itemTotal = item.price * itemQty;
+      const itemShipping = (Number(item.shipping_fee) || 0) * itemQty;
       message += `${index + 1}. *${item.name}*\n`;
       if (item.selectedSize) message += `   • Size: ${item.selectedSize}\n`;
       if (item.selectedColor) message += `   • Rangi: ${item.selectedColor}\n`;
@@ -892,11 +892,13 @@ export default function Home() {
           if (val) message += `   • ${label}: ${val}\n`;
         });
       }
-      message += `   • Idadi: ${itemQty} x ${fmtTZS(item.price)} = ${fmtTZS(itemTotal)}\n\n`;
+      message += `   • Idadi: ${itemQty} x ${fmtTZS(item.price)} = ${fmtTZS(itemTotal)}\n`;
+      if (itemShipping > 0) message += `   • Usafiri: ${fmtTZS(itemShipping)}\n`;
+      message += "\n";
     });
 
     message += `💰 *Bei ya Bidhaa:* ${fmtTZS(subtotal)}\n`;
-    if (shippingFee > 0) message += `🚚 *Gharama ya Usafiri:* ${fmtTZS(shippingFee)}\n`;
+    message += `🚚 *Gharama ya Usafiri:* ${shippingFee > 0 ? fmtTZS(shippingFee) : "0 TZS (Bure / Itathibitishwa)"}\n`;
     message += `💵 *JUMLA KUU:* ${fmtTZS(total)}\n\n`;
     message += "Tafadhali nithibitishie oda hii na kunipatia maelekezo ya kumalizia!";
 
@@ -967,7 +969,12 @@ export default function Home() {
   };
 
   const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
-  const cartTotal = cart ? cart.reduce((s, i) => s + i.price * (i.qty || 1), 0) : 0;
+  const cartSubtotal = cart ? cart.reduce((s, i) => s + (i.price || 0) * (i.qty || 1), 0) : 0;
+  const cartShippingTotal = cart
+    ? cart.reduce((s, i) => s + (Number(i.shipping_fee) || 0) * (i.qty || 1), 0)
+    : 0;
+  const cartGrandTotal = cartSubtotal + cartShippingTotal;
+
   const filteredProducts = products.filter((p) => {
     if (category === "wote") return true;
     const pc = (p.category || "").toString().trim().toLowerCase();
@@ -1592,6 +1599,9 @@ export default function Home() {
                   const variantImage = candidates.find((c) => c?.image)?.image ?? null;
                   const variantPrice =
                     candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
+                  const effectiveShipping =
+                    candidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ??
+                    selectedProduct.shipping_fee;
                   const displayImage = variantImage || modalImages[modalGalleryIdx];
                   const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
 
@@ -1662,12 +1672,19 @@ export default function Home() {
                       )}
 
                       <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-                      <p className="text-xs font-bold text-[#17A398] mb-3">
-                        {fmtTZS(displayPrice)}
-                        {variantPrice !== null && variantPrice !== selectedProduct.price && (
-                          <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
+                      <div className="flex flex-wrap items-center gap-2 mb-3">
+                        <p className="text-xs font-bold text-[#17A398]">
+                          {fmtTZS(displayPrice)}
+                          {variantPrice !== null && variantPrice !== selectedProduct.price && (
+                            <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
+                          )}
+                        </p>
+                        {Number(effectiveShipping) > 0 && (
+                          <span className="text-[10px] font-bold bg-[#E8A93B]/20 text-[#9A6B12] px-2 py-0.5 rounded-full">
+                            🚚 Usafiri: {fmtTZS(Number(effectiveShipping))} / pc
+                          </span>
                         )}
-                      </p>
+                      </div>
 
                       {selectedProduct.description && (
                         <div className="bg-[#F7F3EA] border border-[#E4DFD2] rounded-xl p-3 mb-4">
@@ -2014,9 +2031,10 @@ export default function Home() {
                 <p className="text-xs text-gray-500 py-10 text-center">Kikapu chako kipo wazi kwa sasa.</p>
               ) : (
                 <>
-                  <div className="mt-4 space-y-3 max-h-[35vh] overflow-y-auto pr-1 border-b border-gray-100 pb-4">
+                  <div className="mt-4 space-y-3 max-h-[32vh] overflow-y-auto pr-1 border-b border-gray-100 pb-4">
                     {cart.map((item, idx) => {
                       const itemKey = item.cartItemId || item.id;
+                      const unitShipping = Number(item.shipping_fee) || 0;
                       return (
                         <div key={itemKey || idx} className="p-3 bg-[#F7F3EA] rounded-xl flex items-center justify-between text-xs gap-2">
                           <div className="flex-1 pr-2">
@@ -2030,7 +2048,14 @@ export default function Home() {
                                   val ? <span key={label}>{label}: {val}</span> : null
                                 )}
                             </div>
-                            <span className="font-bold text-[#17A398]">{fmtTZS(item.price)}</span>
+                            <div className="flex flex-wrap items-center gap-x-2 mt-0.5">
+                              <span className="font-bold text-[#17A398]">{fmtTZS(item.price)}</span>
+                              {unitShipping > 0 && (
+                                <span className="text-[10px] text-[#9A6B12] font-semibold">
+                                  + {fmtTZS(unitShipping)} usafiri/pc
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
@@ -2097,15 +2122,25 @@ export default function Home() {
                       />
                     </div>
 
-                    <div className="pt-3 border-t border-gray-100 space-y-2">
-                      <div className="flex justify-between items-center text-sm font-extrabold">
-                        <span>Jumla Kuu:</span>
-                        <span className="text-[#17A398] text-base">{fmtTZS(cartTotal)}</span>
+                    <div className="pt-3 border-t border-gray-100 space-y-1.5 bg-[#F7F3EA]/70 p-3 rounded-xl">
+                      <div className="flex justify-between items-center text-xs text-gray-600">
+                        <span>💰 Bei ya Bidhaa (Subtotal):</span>
+                        <span className="font-bold text-[#12182B]">{fmtTZS(cartSubtotal)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs text-gray-600">
+                        <span>🚚 Gharama ya Usafiri (Shipping):</span>
+                        <span className="font-bold text-[#9A6B12]">
+                          {cartShippingTotal > 0 ? fmtTZS(cartShippingTotal) : "0 TZS (Bure)"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm font-extrabold pt-1.5 border-t border-black/10">
+                        <span>💵 Jumla Kuu:</span>
+                        <span className="text-[#17A398] text-base">{fmtTZS(cartGrandTotal)}</span>
                       </div>
                       <button
                         type="submit"
                         disabled={checkoutStatus === "submitting"}
-                        className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 shadow"
+                        className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 shadow mt-2"
                       >
                         <span>
                           {checkoutStatus === "submitting" ? "⏳ Inatuma Oda..." : "💬 Tuma Oda Hii WhatsApp"}
