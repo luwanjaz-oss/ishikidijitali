@@ -1394,9 +1394,18 @@ export default function Home() {
       {/* NIAGIZE KITU MODAL (TAARIFA ZA KUAGIZA & MADAJA YA SERVICE FEE) */}
       {showCustomOrderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setShowCustomOrderModal(false)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
-            <h3 className="text-base font-bold text-[#12182B] mb-1">🛍️ Niagize Kitu Chochote</h3>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 pt-0 relative shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 z-30 bg-white pt-4 pb-2.5 mb-3 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#12182B]">🛍️ Niagize Kitu Chochote</h3>
+              <button
+                type="button"
+                onClick={() => setShowCustomOrderModal(false)}
+                aria-label="Funga dirisha la Niagize"
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-red-100 text-[#12182B] hover:text-red-600 font-extrabold text-sm flex items-center justify-center transition-colors"
+              >
+                ✕
+              </button>
+            </div>
             <p className="text-xs text-gray-500 mb-4">Chagua aina ya bidhaa/kifaa uone ada ya huduma (service fee), kisha tuma maelezo WhatsApp.</p>
 
             <form onSubmit={handleCustomOrderSubmit} className="space-y-3">
@@ -1530,11 +1539,23 @@ export default function Home() {
         </div>
       )}
 
-      {/* PRODUCT DETAIL & VARIATION MODAL (AUTO-SLIDE + MANUAL SLIDE + WEKA KWENYE KIKAPU & NUNUA) */}
+      {/* PRODUCT DETAIL & VARIATION MODAL (STICKY X + AUTO-SLIDE + MANUAL SLIDE + WEKA KWENYE KIKAPU & NUNUA) */}
       {selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setSelectedProduct(null)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 pt-0 relative shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 z-30 bg-white pt-4 pb-2.5 mb-2 border-b border-gray-100 flex items-center justify-between">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-gray-400">
+                Maelezo ya Bidhaa
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedProduct(null)}
+                aria-label="Funga dirisha la bidhaa"
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-red-100 text-[#12182B] hover:text-red-600 font-extrabold text-sm flex items-center justify-center transition-colors"
+              >
+                ✕
+              </button>
+            </div>
 
             {justAddedToCart ? (
               <div className="flex flex-col items-center text-center py-8 px-2">
