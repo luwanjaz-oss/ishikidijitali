@@ -11,13 +11,16 @@ const NBC_ACCOUNT = "106174003449";
 const ACCOUNT_NAME = "Zacharia Luwanja";
 const SITE_URL = "https://ishikidijitali.com";
 
-// Kama bidhaa haina "commission" iliyowekwa Supabase, hii ndiyo default.
-const DEFAULT_COMMISSION_RATE = 0.20; // 20%
+const DEFAULT_COMMISSION_RATE = 0.20;
 
-// COMMISSION INASOMWA MOJA KWA MOJA KUTOKA "products.commission" (Supabase).
-// Jedwali la "affiliates" halina kolamu ya commission - kila msambazaji
-// anapata commission kulingana na commission ya BIDHAA aliyouza, siyo
-// kiwango chake binafsi.
+const NIAGIZE_TIERS = [
+  { id: "vidogo", label: "👟 Vitu Vidogo (Viatu, Nguo, Vifaa Vidogo)", fee: 10000 },
+  { id: "simu", label: "📱 Simu (iPhone, Samsung, Android)", fee: 25000 },
+  { id: "pc", label: "💻 PC / Laptop & Tablet", fee: 45000 },
+  { id: "electric_machine", label: "⚙️ Vifaa vya Electric & Mashine", fee: 50000 },
+  { id: "mizigo_mikubwa", label: "📦 Mizigo Mikubwa ya Biashara (Jumla / Carton)", fee: 100000 },
+];
+
 function getProductCommissionRate(item) {
   const raw = item.commission;
   if (raw === null || raw === undefined || raw === "") {
@@ -25,22 +28,31 @@ function getProductCommissionRate(item) {
   }
   const num = Number(raw);
   if (Number.isNaN(num)) return DEFAULT_COMMISSION_RATE;
-  // Mfano: 20 kwenye DB inamaanisha 20% -> 0.20
   return num > 1 ? num / 100 : num;
 }
 
-// MACHAGUO YA BIDHAA (size/rangi/aina) YANASOMWA KUTOKA "variants" (jsonb).
 function normalizeVariantList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
     .map((v) => {
-      if (typeof v === "string") return { name: v, image: null, price: null, shipping_fee: null };
-      if (v && typeof v === "object" && v.name) {
+      if (typeof v === "string" || typeof v === "number") {
+        const str = String(v).trim();
+        if (!str) return null;
+        return { name: str, image: null, price: null, shipping_fee: null };
+      }
+      if (v && typeof v === "object") {
+        const labelName = v.name ?? v.label ?? v.value ?? v.title ?? v.watt ?? v.size ?? v.color ?? v.type;
+        if (labelName === null || labelName === undefined || String(labelName).trim() === "") {
+          return null;
+        }
+        const rawPrice = v.price ?? v.bei ?? null;
+        const rawShipping = v.shipping_fee ?? v.shipping ?? null;
         return {
-          name: v.name,
-          image: v.image || null,
-          price: v.price !== null && v.price !== undefined && v.price !== "" ? Number(v.price) : null,
-          shipping_fee: v.shipping_fee !== null && v.shipping_fee !== undefined && v.shipping_fee !== "" ? Number(v.shipping_fee) : null,
+          name: String(labelName).trim(),
+          image: v.image || v.image_url || null,
+          price: rawPrice !== null && rawPrice !== undefined && rawPrice !== "" ? Number(rawPrice) : null,
+          shipping_fee:
+            rawShipping !== null && rawShipping !== undefined && rawShipping !== "" ? Number(rawShipping) : null,
         };
       }
       return null;
@@ -58,6 +70,21 @@ function getProductVariants(p) {
       return { sizes: [], colors: [], types: [], options: {} };
     }
   }
+  if (!v || typeof v !== "object") {
+    return { sizes: [], colors: [], types: [], options: {} };
+  }
+
+  // Kama variants imehifadhiwa kama Array moja kwa moja kwenye jsonb (mfano [{ name: "10W", price: 15000 }, ...])
+  if (Array.isArray(v)) {
+    const directList = normalizeVariantList(v);
+    return {
+      sizes: [],
+      colors: [],
+      types: [],
+      options: directList.length > 0 ? { Chaguo: directList } : {},
+    };
+  }
+
   const options = {};
   if (v.options && typeof v.options === "object" && !Array.isArray(v.options)) {
     Object.entries(v.options).forEach(([label, arr]) => {
@@ -65,6 +92,19 @@ function getProductVariants(p) {
       if (list.length > 0) options[label] = list;
     });
   }
+
+  // Soma funguo nyingine zozote za array kwenye variants (mfano watts, volts, capacity, model, categories)
+  const reservedKeys = new Set(["sizes", "colors", "types", "options"]);
+  Object.entries(v).forEach(([key, val]) => {
+    if (!reservedKeys.has(key) && Array.isArray(val)) {
+      const list = normalizeVariantList(val);
+      if (list.length > 0) {
+        const niceLabel = key.charAt(0).toUpperCase() + key.slice(1);
+        options[niceLabel] = list;
+      }
+    }
+  });
+
   return {
     sizes: normalizeVariantList(v.sizes),
     colors: normalizeVariantList(v.colors),
@@ -144,7 +184,7 @@ const FAQ_ITEMS = [
   },
   {
     q: "Ninanunuaje bidhaa?",
-    a: "Chagua bidhaa Duka Kuu, bonyeza '+ Ongeza' kuweka kikapuni (chagua size/rangi/aina kama zipo), kisha fungua kikapu chako, jaza taarifa zako, na bonyeza 'Tuma Oda Hii WhatsApp'. Timu yetu itakuthibitishia oda kupitia WhatsApp.",
+    a: "Chagua bidhaa Duka Kuu, bonyeza '+ Ongeza' kuweka kikapuni (chagua size/rangi/aina/uwezo kama zipo), kisha fungua kikapu chako, jaza taarifa zako, na bonyeza 'Tuma Oda Hii WhatsApp'. Au tumia 'Niagize Kitu' kwa bidhaa maalumu unayotafuta.",
   },
   {
     q: "Malipo yanafanyikaje?",
@@ -174,7 +214,11 @@ function fmtTZS(n) {
 
 function getProductImages(p) {
   if (!p?.image_url) return [];
-  return p.image_url.split(",").map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(p.image_url)) return p.image_url.filter(Boolean);
+  return String(p.image_url)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 const STATUS_PROGRESS = {
@@ -239,6 +283,166 @@ function getOrderJourney(order, products) {
   };
 }
 
+function ProductCard({ product, onShare, onOpenModal }) {
+  const images = getProductImages(product);
+  const [imgIdx, setImgIdx] = useState(0);
+  const touchStartX = useRef(null);
+
+  const variants = getProductVariants(product);
+  const hasVariants =
+    variants.sizes.length > 0 ||
+    variants.colors.length > 0 ||
+    variants.types.length > 0 ||
+    Object.keys(variants.options).length > 0;
+
+  function prevImg(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setImgIdx((i) => (i - 1 + images.length) % images.length);
+  }
+
+  function nextImg(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setImgIdx((i) => (i + 1) % images.length);
+  }
+
+  function onTouchStart(e) {
+    touchStartX.current = e.touches[0].clientX;
+  }
+
+  function onTouchEnd(e) {
+    if (touchStartX.current === null || images.length <= 1) return;
+    const diff = e.changedTouches[0].clientX - touchStartX.current;
+    if (Math.abs(diff) > 30) {
+      if (diff < 0) setImgIdx((i) => (i + 1) % images.length);
+      else setImgIdx((i) => (i - 1 + images.length) % images.length);
+    }
+    touchStartX.current = null;
+  }
+
+  return (
+    <div className="bg-white border border-[#E4DFD2] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all">
+      <div
+        className="h-40 sm:h-52 bg-[#F0FAF8] relative flex items-center justify-center p-2 group select-none"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
+        <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#17A398] text-white text-[9px] sm:text-[10px] font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full z-10">
+          {product.origin || "DSM / China"}
+        </span>
+
+        {images.length > 1 && (
+          <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-black/55 text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-10">
+            📷 {imgIdx + 1}/{images.length}
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onOpenModal(product)}
+          className="w-full h-full flex items-center justify-center"
+        >
+          {images.length > 0 ? (
+            <img
+              src={images[imgIdx] || images[0]}
+              alt={product.name}
+              className="h-full object-contain transition-all duration-300"
+            />
+          ) : (
+            <span className="text-4xl sm:text-5xl">{product.emoji || "📦"}</span>
+          )}
+        </button>
+
+        {images.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={prevImg}
+              aria-label="Picha iliyopita"
+              className="absolute left-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/45 hover:bg-black/70 text-white text-xs font-bold flex items-center justify-center z-10"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              onClick={nextImg}
+              aria-label="Picha inayofuata"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/45 hover:bg-black/70 text-white text-xs font-bold flex items-center justify-center z-10"
+            >
+              ›
+            </button>
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1 z-10">
+              {images.map((_, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setImgIdx(idx);
+                  }}
+                  className={`h-1.5 rounded-full transition-all ${
+                    idx === imgIdx ? "w-4 bg-[#17A398]" : "w-1.5 bg-black/25"
+                  }`}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="p-3 sm:p-4 flex flex-col gap-2 flex-1">
+        <button
+          type="button"
+          onClick={() => onOpenModal(product)}
+          className="text-left"
+        >
+          <h3 className="text-xs sm:text-sm font-bold text-[#12182B] line-clamp-1">{product.name}</h3>
+        </button>
+        <p className="text-[11px] sm:text-xs text-[#6B7280] line-clamp-2 leading-relaxed">{product.description}</p>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {Number(product.sold_count) > 0 && (
+            <span className="text-[9px] sm:text-[10px] text-[#E8A93B] font-bold">
+              🔥 {product.sold_count} wameshanunua
+            </span>
+          )}
+          {hasVariants && (
+            <span className="text-[9px] bg-[#12182B]/10 text-[#12182B] font-bold px-2 py-0.5 rounded-full">
+              Chaguo tofauti zipo
+            </span>
+          )}
+        </div>
+
+        <div className="mt-auto pt-2 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(product.price)}</span>
+            <span className="text-[9px] sm:text-[10px] text-green-600 font-bold">✓ Pay on Delivery</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onShare(product)}
+              title="Sambaza Bidhaa"
+              className="bg-gray-100 hover:bg-gray-200 text-[#12182B] text-[11px] font-bold px-2 py-2 rounded-xl transition-colors"
+            >
+              📤
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenModal(product)}
+              className="bg-[#12182B] hover:bg-[#17A398] text-white text-[11px] sm:text-xs font-bold px-2.5 py-2 sm:px-3 rounded-xl transition-colors"
+            >
+              Angalia / Chagua
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const cartContext = useCart();
   const cart = cartContext.cart || [];
@@ -252,9 +456,20 @@ export default function Home() {
 
   const [showCartDrawer, setShowCartDrawer] = useState(false);
   const [showTrackingModal, setShowTrackingModal] = useState(false);
+  const [showCustomOrderModal, setShowCustomOrderModal] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [copiedProductId, setCopiedProductId] = useState(null);
+
+  // Hali ya "Niagize" (taarifa za kuagiza na madaraja ya service fee)
+  const [customItemTier, setCustomItemTier] = useState("vidogo");
+  const [customItemName, setCustomItemName] = useState("");
+  const [customItemDetails, setCustomItemDetails] = useState("");
+  const [customItemOrigin, setCustomItemOrigin] = useState("China / Nje ya Nchi");
+  const [customItemShippingMode, setCustomItemShippingMode] = useState("Ndege / Express (Haraka)");
+  const [customItemQty, setCustomItemQty] = useState(1);
+  const [customItemMkoa, setCustomItemMkoa] = useState("Dar es Salaam");
+  const [customItemPhone, setCustomItemPhone] = useState("");
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -265,7 +480,9 @@ export default function Home() {
   const [selectedColor, setSelectedColor] = useState("");
   const [selectedType, setSelectedType] = useState("");
   const [selectedOptions, setSelectedOptions] = useState({});
+  const [modalQty, setModalQty] = useState(1);
   const [modalGalleryIdx, setModalGalleryIdx] = useState(0);
+  const [modalAutoSlidePaused, setModalAutoSlidePaused] = useState(false);
 
   const [routeIdx, setRouteIdx] = useState(0);
   const [fursaIdx, setFursaIdx] = useState(0);
@@ -276,9 +493,21 @@ export default function Home() {
   const [justAddedToCart, setJustAddedToCart] = useState(false);
 
   const swipeStartX = useRef(null);
+  const modalPauseTimeoutRef = useRef(null);
+
+  function pauseModalAutoSlideBriefly() {
+    setModalAutoSlidePaused(true);
+    if (modalPauseTimeoutRef.current) clearTimeout(modalPauseTimeoutRef.current);
+    modalPauseTimeoutRef.current = setTimeout(() => {
+      setModalAutoSlidePaused(false);
+    }, 7000);
+  }
+
   function handleSwipeStart(e) {
     swipeStartX.current = e.touches ? e.touches[0].clientX : e.clientX;
+    pauseModalAutoSlideBriefly();
   }
+
   function handleSwipeEnd(e, length, idx, setIdx) {
     if (swipeStartX.current === null || length <= 1) return;
     const endX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
@@ -296,11 +525,24 @@ export default function Home() {
   const [trackingLoading, setTrackingLoading] = useState(false);
 
   const [activeRefCode, setActiveRefCode] = useState("");
+  const [includeRefOnShare, setIncludeRefOnShare] = useState(true);
 
   const [checkoutStatus, setCheckoutStatus] = useState("idle");
   const [lastOrder, setLastOrder] = useState(null);
 
-  function buildProductShareData(product) {
+  function getEffectiveDisplayPrice(product) {
+    const v = getProductVariants(product);
+    const allChoices = [
+      ...v.sizes,
+      ...v.colors,
+      ...v.types,
+      ...Object.values(v.options).flat(),
+    ];
+    const priced = allChoices.find((c) => c?.price !== null && c?.price !== undefined);
+    return priced ? priced.price : product.price;
+  }
+
+  function buildProductShareData(product, withRef = includeRefOnShare) {
     const origin =
       typeof window !== "undefined" && window.location.origin.startsWith("http")
         ? window.location.origin
@@ -310,17 +552,18 @@ export default function Home() {
       (typeof window !== "undefined" ? localStorage.getItem("ishiki_ref_code") : "");
 
     const url = new URL(`${origin}/product/${product.id}`);
-    if (refCode) {
+    if (withRef && refCode) {
       url.searchParams.set("ref", refCode);
     }
 
+    const displayPrice = getEffectiveDisplayPrice(product);
     const productUrl = url.toString();
     const shareText =
       `🔥 *${product.name}*\n` +
-      `💰 Bei: *${fmtTZS(product.price)}*\n` +
+      `💰 Bei: *${fmtTZS(displayPrice)}*\n` +
       `✅ Agiza sasa kupitia Ishi Kidijitali:\n${productUrl}`;
 
-    return { productUrl, shareText };
+    return { productUrl, shareText, displayPrice };
   }
 
   function handleShareWhatsApp(product) {
@@ -333,17 +576,17 @@ export default function Home() {
   }
 
   async function handleShareDevice(product) {
-    const { productUrl, shareText } = buildProductShareData(product);
+    const { productUrl, shareText, displayPrice } = buildProductShareData(product);
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
         await navigator.share({
-          title: `${product.name} — ${fmtTZS(product.price)}`,
+          title: `${product.name} — ${fmtTZS(displayPrice)}`,
           text: shareText,
           url: productUrl,
         });
         return;
       } catch {
-        // Mtumiaji akifunga share sheet, rudi WhatsApp
+        // Fallback kwenda WhatsApp
       }
     }
     handleShareWhatsApp(product);
@@ -356,6 +599,39 @@ export default function Home() {
       setCopiedProductId(product.id);
       setTimeout(() => setCopiedProductId(null), 2500);
     }
+  }
+
+  function handleClearSavedRef() {
+    setActiveRefCode("");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("ishiki_ref_code");
+    }
+  }
+
+  function handleCustomOrderSubmit(e) {
+    e.preventDefault();
+    const qtyNum = Math.max(1, Number(customItemQty) || 1);
+    const selectedTierObj = NIAGIZE_TIERS.find((t) => t.id === customItemTier) || NIAGIZE_TIERS[0];
+
+    let msg = "🛍️ *OMBI LA NIAGIZE KITU (ISHI KIDIJITALI)*\n\n";
+    msg += `📂 *Aina ya Agizo:* ${selectedTierObj.label}\n`;
+    msg += `📦 *Bidhaa / Kifaa:* ${customItemName}\n`;
+    msg += `🌍 *Inapotoka:* ${customItemOrigin}\n`;
+    msg += `🚢 *Njia ya Usafiri:* ${customItemShippingMode}\n`;
+    msg += `🔢 *Idadi (Qty):* ${qtyNum}\n`;
+    if (customItemDetails) msg += `📝 *Maelezo / Watt / Volt / Size / Link:* ${customItemDetails}\n`;
+    msg += `🛠️ *Ada ya Huduma (Service Fee):* ${fmtTZS(selectedTierObj.fee)}\n`;
+    msg += `📍 *Mkoa:* ${customItemMkoa}\n`;
+    msg += `📞 *Simu ya Mteja:* ${customItemPhone}\n`;
+    if (activeRefCode && includeRefOnShare) msg += `🔗 *Msambazaji Ref:* ${activeRefCode}\n`;
+    msg += "\nTafadhali nithibitishie bei ya bidhaa, usafiri, na utaratibu wa kuanza kuagiza.";
+
+    window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+    setShowCustomOrderModal(false);
+    setCustomItemName("");
+    setCustomItemDetails("");
+    setCustomItemQty(1);
+    setCustomItemPhone("");
   }
 
   useEffect(() => {
@@ -404,6 +680,15 @@ export default function Home() {
     return () => clearInterval(t);
   }, []);
 
+  const modalImagesForEffect = selectedProduct ? getProductImages(selectedProduct) : [];
+  useEffect(() => {
+    if (!selectedProduct || modalImagesForEffect.length <= 1 || modalAutoSlidePaused) return;
+    const t = setInterval(() => {
+      setModalGalleryIdx((i) => (i + 1) % modalImagesForEffect.length);
+    }, 3500);
+    return () => clearInterval(t);
+  }, [selectedProduct, modalImagesForEffect.length, modalAutoSlidePaused]);
+
   const handleOpenProductModal = (product) => {
     setSelectedProduct(product);
     const { sizes, colors, types, options } = getProductVariants(product);
@@ -415,12 +700,14 @@ export default function Home() {
       initialOptions[label] = list[0]?.name || "";
     });
     setSelectedOptions(initialOptions);
+    setModalQty(1);
     setModalGalleryIdx(0);
+    setModalAutoSlidePaused(false);
     setJustAddedToCart(false);
   };
 
-  const handleAddToCartWithOptions = () => {
-    if (!selectedProduct) return;
+  const buildModalCartItem = () => {
+    if (!selectedProduct) return null;
     const { sizes, colors, types, options } = getProductVariants(selectedProduct);
     const sizeObj = sizes.find((s) => s.name === selectedSize);
     const colorObj = colors.find((c) => c.name === selectedColor);
@@ -429,11 +716,14 @@ export default function Home() {
       list.find((o) => o.name === selectedOptions[label])
     );
     const candidates = [...selectedOptionObjs, colorObj, typeObj, sizeObj];
-    const effectivePrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? selectedProduct.price;
+    const effectivePrice =
+      candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? selectedProduct.price;
     const effectiveImage = candidates.find((c) => c?.image)?.image ?? null;
-    const effectiveShippingFee = candidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ?? selectedProduct.shipping_fee;
+    const effectiveShippingFee =
+      candidates.find((c) => c?.shipping_fee !== null && c?.shipping_fee !== undefined)?.shipping_fee ??
+      selectedProduct.shipping_fee;
 
-    const itemWithOptions = {
+    return {
       ...selectedProduct,
       price: effectivePrice,
       basePrice: selectedProduct.price,
@@ -443,10 +733,25 @@ export default function Home() {
       selectedType,
       selectedOptions: { ...selectedOptions },
       variantImage: effectiveImage,
-      qty: 1,
+      qty: Math.max(1, Number(modalQty) || 1),
     };
+  };
+
+  const handleAddToCartWithOptions = () => {
+    const itemWithOptions = buildModalCartItem();
+    if (!itemWithOptions) return;
     if (addToCart) addToCart(itemWithOptions);
     setJustAddedToCart(true);
+  };
+
+  const handleBuyNowFromModal = () => {
+    const itemWithOptions = buildModalCartItem();
+    if (!itemWithOptions) return;
+    if (addToCart) addToCart(itemWithOptions);
+    setSelectedProduct(null);
+    setJustAddedToCart(false);
+    setCheckoutStatus("idle");
+    setShowCartDrawer(true);
   };
 
   const handleContinueShopping = () => {
@@ -690,6 +995,7 @@ export default function Home() {
           <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-white/80">
             <Link href="#duka" className="hover:text-white transition-colors">Duka</Link>
             <a href="#kuhusu" className="hover:text-white transition-colors">Kuhusu Sisi</a>
+            <button onClick={() => setShowCustomOrderModal(true)} className="hover:text-[#E8A93B] transition-colors">Niagize Kitu 🛍️</button>
             <button onClick={() => setShowTrackingModal(true)} className="hover:text-white transition-colors">Fuatilia Mzigo 📦</button>
             <a href="#uwekezaji" className="hover:text-white transition-colors">Wekeza / Lipa Namba 💰</a>
             <a href="#maswali" className="hover:text-white transition-colors">Maswali 💬</a>
@@ -715,6 +1021,12 @@ export default function Home() {
           <div className="md:hidden bg-[#12182B] border-t border-white/10 px-4 py-3 flex flex-col gap-3 text-xs font-semibold text-white/80">
             <a href="#duka" onClick={() => setShowMobileMenu(false)} className="py-1">Duka</a>
             <a href="#kuhusu" onClick={() => setShowMobileMenu(false)} className="py-1">Kuhusu Sisi</a>
+            <button
+              onClick={() => { setShowCustomOrderModal(true); setShowMobileMenu(false); }}
+              className="py-1 text-left text-[#E8A93B]"
+            >
+              Niagize Kitu 🛍️
+            </button>
             <button
               onClick={() => { setShowTrackingModal(true); setShowMobileMenu(false); }}
               className="py-1 text-left"
@@ -744,9 +1056,13 @@ export default function Home() {
               Tafuta bidhaa au mashine yoyote - tunakununulia kutoka sokoni Kariakoo au Nje ya Nchi na kukuletea mkoani kwako kwa usalama.
             </p>
             <div className="flex flex-wrap gap-3">
-              <a href={`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent("Habari, nataka kuagiza bidhaa/kifaa.")}`} target="_blank" rel="noreferrer" className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg">
-                Agiza Kitu WhatsApp
-              </a>
+              <button
+                type="button"
+                onClick={() => setShowCustomOrderModal(true)}
+                className="bg-[#E8A93B] hover:bg-[#d4962d] text-[#12182B] px-5 py-3 rounded-xl font-bold text-xs transition-colors shadow-lg"
+              >
+                Niagize Kitu
+              </button>
               <Link href="/wasambazaji" className="bg-white/10 hover:bg-white/20 text-white px-5 py-3 rounded-xl font-semibold text-xs border border-white/20 transition-colors">
                 Jiunge Kama Msambazaji
               </Link>
@@ -938,7 +1254,7 @@ export default function Home() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
             <h2 className="text-xl sm:text-2xl font-bold">Bidhaa Zilizopo Duka Kuu</h2>
-            <p className="text-xs text-gray-500">Chagua bidhaa na uagize kwa urahisi</p>
+            <p className="text-xs text-gray-500">Telezesha picha kuona zaidi, fungua bidhaa kusoma maelezo na kuchagua</p>
           </div>
 
           <div className="flex gap-2 flex-wrap">
@@ -962,63 +1278,14 @@ export default function Home() {
           <p className="text-xs text-gray-500 py-8 text-center">Hakuna bidhaa kwenye category hii kwa sasa.</p>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5">
-            {filteredProducts.map((p) => {
-              const images = getProductImages(p);
-              return (
-                <div key={p.id} className="bg-white border border-[#E4DFD2] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-all">
-                  <Link href={`/product/${p.id}`} className="h-40 sm:h-52 bg-[#F0FAF8] relative flex items-center justify-center p-2">
-                    <span className="absolute top-2 left-2 sm:top-3 sm:left-3 bg-[#17A398] text-white text-[9px] sm:text-[10px] font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full z-10">
-                      {p.origin || "DSM / China"}
-                    </span>
-                    {images.length > 1 && (
-                      <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-black/50 text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-10">
-                        📷 {images.length}
-                      </span>
-                    )}
-                    {images.length > 0 ? (
-                      <img src={images[0]} alt={p.name} className="h-full object-contain hover:scale-105 transition-transform duration-300" />
-                    ) : (
-                      <span className="text-4xl sm:text-5xl">{p.emoji || "📦"}</span>
-                    )}
-                  </Link>
-
-                  <div className="p-3 sm:p-4 flex flex-col gap-2 flex-1">
-                    <Link href={`/product/${p.id}`}>
-                      <h3 className="text-xs sm:text-sm font-bold text-[#12182B] line-clamp-1">{p.name}</h3>
-                    </Link>
-                    <p className="text-[11px] sm:text-xs text-[#6B7280] line-clamp-2 leading-relaxed">{p.description}</p>
-                    {Number(p.sold_count) > 0 && (
-                      <span className="text-[9px] sm:text-[10px] text-[#E8A93B] font-bold">
-                        🔥 {p.sold_count} wameshanunua
-                      </span>
-                    )}
-
-                    <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
-                      <div>
-                        <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(p.price)}</span>
-                        <span className="text-[9px] sm:text-[10px] text-green-600 font-bold">✓ Pay on Delivery</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleShareDevice(p)}
-                          title="Sambaza Bidhaa"
-                          className="bg-gray-100 hover:bg-gray-200 text-[#12182B] text-[11px] font-bold px-2 py-2 rounded-xl transition-colors"
-                        >
-                          📤
-                        </button>
-                        <button
-                          onClick={() => handleOpenProductModal(p)}
-                          className="bg-[#12182B] hover:bg-[#17A398] text-white text-[11px] sm:text-xs font-bold px-2.5 py-2 sm:px-3 rounded-xl transition-colors"
-                        >
-                          + Ongeza
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {filteredProducts.map((p) => (
+              <ProductCard
+                key={p.id}
+                product={p}
+                onShare={handleShareDevice}
+                onOpenModal={handleOpenProductModal}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -1124,7 +1391,146 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* PRODUCT VARIATION MODAL */}
+      {/* NIAGIZE KITU MODAL (TAARIFA ZA KUAGIZA & MADAJA YA SERVICE FEE) */}
+      {showCustomOrderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setShowCustomOrderModal(false)} className="absolute top-4 right-4 font-bold text-gray-400 hover:text-black">✕</button>
+            <h3 className="text-base font-bold text-[#12182B] mb-1">🛍️ Niagize Kitu Chochote</h3>
+            <p className="text-xs text-gray-500 mb-4">Chagua aina ya bidhaa/kifaa uone ada ya huduma (service fee), kisha tuma maelezo WhatsApp.</p>
+
+            <form onSubmit={handleCustomOrderSubmit} className="space-y-3">
+              <div>
+                <label className="text-[11px] font-bold block mb-1">Chagua Aina ya Bidhaa / Kifaa:</label>
+                <select
+                  value={customItemTier}
+                  onChange={(e) => setCustomItemTier(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398] bg-white font-semibold"
+                >
+                  {NIAGIZE_TIERS.map((tier) => (
+                    <option key={tier.id} value={tier.id}>
+                      {tier.label} — {fmtTZS(tier.fee)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold block mb-1">Jina la Bidhaa / Kifaa:</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Mfano: Kiatu / iPhone / Laptop / Mashine"
+                  value={customItemName}
+                  onChange={(e) => setCustomItemName(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] font-bold block mb-1">Inapotoka:</label>
+                  <select
+                    value={customItemOrigin}
+                    onChange={(e) => setCustomItemOrigin(e.target.value)}
+                    className="w-full px-2 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398] bg-white font-semibold"
+                  >
+                    <option value="China / Nje ya Nchi">🇨🇳 China</option>
+                    <option value="USA">🇺🇸 USA</option>
+                    <option value="Dubai (UAE)">🇦🇪 Dubai</option>
+                    <option value="Dar es Salaam / Kariakoo">🇹🇿 Dar es Salaam</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold block mb-1">Idadi (Quantity):</label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={customItemQty}
+                    onChange={(e) => setCustomItemQty(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold block mb-1">Njia ya Usafiri Unayopendelea:</label>
+                <select
+                  value={customItemShippingMode}
+                  onChange={(e) => setCustomItemShippingMode(e.target.value)}
+                  className="w-full px-2 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398] bg-white font-semibold"
+                >
+                  <option value="Ndege / Express (Haraka)">✈️ Ndege / Express (Haraka)</option>
+                  <option value="Meli / Sea Cargo (Nafuu kwa mzigo mkubwa)">🚢 Meli / Sea Cargo</option>
+                  <option value="Kariakoo → Mkoani (Basi / Express)">🚌 Kariakoo → Mkoani</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold block mb-1">Maelezo / Watt / Volt / Size / Rangi / Link:</label>
+                <textarea
+                  rows={3}
+                  placeholder="Weka maelezo ya bidhaa, vipimo/specs, au link yake..."
+                  value={customItemDetails}
+                  onChange={(e) => setCustomItemDetails(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[11px] font-bold block mb-1">Mkoa Wako:</label>
+                  <select
+                    value={customItemMkoa}
+                    onChange={(e) => setCustomItemMkoa(e.target.value)}
+                    className="w-full px-2 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398] bg-white font-semibold"
+                  >
+                    {MIKOA.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold block mb-1">Namba ya Simu:</label>
+                  <input
+                    type="tel"
+                    required
+                    placeholder="0754XXXXXX"
+                    value={customItemPhone}
+                    onChange={(e) => setCustomItemPhone(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-xl text-xs focus:outline-none focus:border-[#17A398]"
+                  />
+                </div>
+              </div>
+
+              {(() => {
+                const activeTier = NIAGIZE_TIERS.find((t) => t.id === customItemTier) || NIAGIZE_TIERS[0];
+                return (
+                  <div className="bg-[#F7F3EA] border border-[#E4DFD2] rounded-xl p-3 text-xs space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-600">🛠️ Ada ya Huduma (Service Fee):</span>
+                      <span className="font-extrabold text-[#17A398] text-sm">{fmtTZS(activeTier.fee)}</span>
+                    </div>
+                    <p className="text-[10px] text-gray-500">
+                      * Gharama ya bidhaa yenyewe na nauli ya usafiri (uzito/ujazo) itathibitishwa WhatsApp kabla ya malipo.
+                    </p>
+                  </div>
+                );
+              })()}
+
+              <button
+                type="submit"
+                className="w-full bg-[#25D366] hover:bg-[#1ea952] text-white text-xs font-bold py-3 rounded-xl transition-colors shadow mt-2"
+              >
+                💬 Tuma Ombi la Niagize WhatsApp
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PRODUCT DETAIL & VARIATION MODAL (AUTO-SLIDE + MANUAL SLIDE + WEKA KWENYE KIKAPU & NUNUA) */}
       {selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 relative shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1135,7 +1541,7 @@ export default function Home() {
                 <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mb-3">
                   <span className="text-2xl">✅</span>
                 </div>
-                <h3 className="text-base font-bold text-[#12182B] mb-1">Imeongezwa Kikapuni!</h3>
+                <h3 className="text-base font-bold text-[#12182B] mb-1">Imewekwa Kwenye Kikapu!</h3>
                 <p className="text-xs text-gray-500 mb-6">{selectedProduct.name}</p>
                 <div className="w-full space-y-2">
                   <button
@@ -1148,7 +1554,7 @@ export default function Home() {
                     onClick={handleGoToCartFromModal}
                     className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow"
                   >
-                    🛒 Nenda Kikapuni ({cartCount + 1})
+                    🛒 Nenda Kikapuni ({cartCount})
                   </button>
                 </div>
               </div>
@@ -1163,7 +1569,8 @@ export default function Home() {
                   );
                   const candidates = [...optionObjs, colorObj, typeObj, sizeObj];
                   const variantImage = candidates.find((c) => c?.image)?.image ?? null;
-                  const variantPrice = candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
+                  const variantPrice =
+                    candidates.find((c) => c?.price !== null && c?.price !== undefined)?.price ?? null;
                   const displayImage = variantImage || modalImages[modalGalleryIdx];
                   const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
 
@@ -1172,21 +1579,61 @@ export default function Home() {
                       {(displayImage || modalImages.length > 0) && (
                         <div className="mb-4">
                           <div
-                            className="h-44 sm:h-52 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden select-none touch-pan-y"
+                            className="h-48 sm:h-56 bg-[#F0FAF8] rounded-xl flex items-center justify-center overflow-hidden select-none touch-pan-y relative"
                             onTouchStart={handleSwipeStart}
                             onTouchEnd={(e) => !variantImage && handleSwipeEnd(e, modalImages.length, modalGalleryIdx, setModalGalleryIdx)}
                           >
+                            {!variantImage && modalImages.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setModalAutoSlidePaused((p) => !p)}
+                                className="absolute top-2 right-2 bg-black/60 text-white text-[9px] font-bold px-2 py-0.5 rounded-full z-10"
+                              >
+                                {modalAutoSlidePaused ? "▶ Auto" : "⏸ Auto"}
+                              </button>
+                            )}
+
                             {displayImage ? (
                               <img src={displayImage} alt={selectedProduct.name} className="h-full object-contain pointer-events-none" draggable={false} />
                             ) : null}
+
+                            {!variantImage && modalImages.length > 1 && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    pauseModalAutoSlideBriefly();
+                                    setModalGalleryIdx((i) => (i - 1 + modalImages.length) % modalImages.length);
+                                  }}
+                                  className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/50 text-white text-sm font-bold flex items-center justify-center z-10"
+                                >
+                                  ‹
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    pauseModalAutoSlideBriefly();
+                                    setModalGalleryIdx((i) => (i + 1) % modalImages.length);
+                                  }}
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-black/50 text-white text-sm font-bold flex items-center justify-center z-10"
+                                >
+                                  ›
+                                </button>
+                              </>
+                            )}
                           </div>
                           {!variantImage && modalImages.length > 1 && (
                             <div className="flex justify-center gap-1.5 mt-2">
                               {modalImages.map((_, i) => (
-                                <span
+                                <button
                                   key={i}
+                                  type="button"
+                                  onClick={() => {
+                                    pauseModalAutoSlideBriefly();
+                                    setModalGalleryIdx(i);
+                                  }}
                                   className={`h-1.5 rounded-full transition-all ${i === modalGalleryIdx ? "w-5 bg-[#17A398]" : "w-1.5 bg-gray-300"}`}
-                                ></span>
+                                />
                               ))}
                             </div>
                           )}
@@ -1194,12 +1641,23 @@ export default function Home() {
                       )}
 
                       <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
-                      <p className="text-xs font-bold text-[#17A398] mb-4">
+                      <p className="text-xs font-bold text-[#17A398] mb-3">
                         {fmtTZS(displayPrice)}
                         {variantPrice !== null && variantPrice !== selectedProduct.price && (
                           <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
                         )}
                       </p>
+
+                      {selectedProduct.description && (
+                        <div className="bg-[#F7F3EA] border border-[#E4DFD2] rounded-xl p-3 mb-4">
+                          <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#12182B] mb-1">
+                            Maelezo ya Bidhaa:
+                          </p>
+                          <p className="text-xs text-[#374151] whitespace-pre-line leading-relaxed">
+                            {selectedProduct.description}
+                          </p>
+                        </div>
+                      )}
                     </>
                   );
                 })()}
@@ -1211,10 +1669,12 @@ export default function Home() {
                       {modalVariants.sizes.map((sz) => (
                         <button
                           key={sz.name}
+                          type="button"
                           onClick={() => setSelectedSize(sz.name)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedSize === sz.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${selectedSize === sz.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
                         >
                           {sz.name}
+                          {sz.price !== null && sz.price !== undefined && ` (${fmtTZS(sz.price)})`}
                         </button>
                       ))}
                     </div>
@@ -1228,13 +1688,15 @@ export default function Home() {
                       {modalVariants.colors.map((clr) => (
                         <button
                           key={clr.name}
+                          type="button"
                           onClick={() => setSelectedColor(clr.name)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${selectedColor === clr.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1.5 ${selectedColor === clr.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
                         >
                           {clr.image && (
                             <img src={clr.image} alt="" className="w-4 h-4 rounded-full object-cover" />
                           )}
                           {clr.name}
+                          {clr.price !== null && clr.price !== undefined && ` (${fmtTZS(clr.price)})`}
                         </button>
                       ))}
                     </div>
@@ -1243,15 +1705,17 @@ export default function Home() {
 
                 {modalVariants.types.length > 0 && (
                   <div className="mb-4">
-                    <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo (mfano Watts, Voltage, 220V/Battery):</label>
+                    <label className="text-xs font-bold block mb-1">Chagua Aina / Uwezo (Watts, Voltage, n.k.):</label>
                     <div className="flex gap-2 flex-wrap">
                       {modalVariants.types.map((tp) => (
                         <button
                           key={tp.name}
+                          type="button"
                           onClick={() => setSelectedType(tp.name)}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${selectedType === tp.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${selectedType === tp.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"}`}
                         >
                           {tp.name}
+                          {tp.price !== null && tp.price !== undefined && ` (${fmtTZS(tp.price)})`}
                         </button>
                       ))}
                     </div>
@@ -1265,30 +1729,83 @@ export default function Home() {
                       {list.map((opt) => (
                         <button
                           key={opt.name}
+                          type="button"
                           onClick={() => setSelectedOptions((prev) => ({ ...prev, [label]: opt.name }))}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold border ${
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${
                             selectedOptions[label] === opt.name ? "bg-[#12182B] text-white border-[#12182B]" : "bg-gray-50 border-gray-200"
                           }`}
                         >
                           {opt.name}
+                          {opt.price !== null && opt.price !== undefined && ` (${fmtTZS(opt.price)})`}
                         </button>
                       ))}
                     </div>
                   </div>
                 ))}
 
-                <button
-                  onClick={handleAddToCartWithOptions}
-                  className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 rounded-xl transition-all shadow mt-2"
-                >
-                  Weka Kikapuni 🛒
-                </button>
+                <div className="mb-4 flex items-center justify-between bg-[#F7F3EA] px-3 py-2 rounded-xl">
+                  <span className="text-xs font-bold text-[#12182B]">Idadi (Quantity):</span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setModalQty((q) => Math.max(1, q - 1))}
+                      className="w-7 h-7 rounded-lg bg-white border border-gray-200 font-bold text-sm"
+                    >
+                      -
+                    </button>
+                    <span className="text-xs font-extrabold">{modalQty}</span>
+                    <button
+                      type="button"
+                      onClick={() => setModalQty((q) => q + 1)}
+                      className="w-7 h-7 rounded-lg bg-white border border-gray-200 font-bold text-sm"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
 
-                {/* VITUFE VYA KUSHARE BIDHAA */}
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={handleAddToCartWithOptions}
+                    className="w-full bg-[#12182B] hover:bg-[#1e2744] text-white text-xs font-bold py-3 px-2 rounded-xl transition-all shadow"
+                  >
+                    Weka Kwenye Kikapu 🛒
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBuyNowFromModal}
+                    className="w-full bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold py-3 px-2 rounded-xl transition-all shadow"
+                  >
+                    Nunua ⚡
+                  </button>
+                </div>
+
                 <div className="mt-4 pt-3 border-t border-gray-100 space-y-2">
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                    Sambaza Bidhaa Hii:
-                  </p>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                      Sambaza Bidhaa Hii:
+                    </p>
+                    {activeRefCode && (
+                      <div className="flex items-center gap-2 text-[10px]">
+                        <label className="flex items-center gap-1 cursor-pointer font-semibold text-[#12182B]">
+                          <input
+                            type="checkbox"
+                            checked={includeRefOnShare}
+                            onChange={(e) => setIncludeRefOnShare(e.target.checked)}
+                          />
+                          <span>Ref: {activeRefCode}</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleClearSavedRef}
+                          className="text-red-500 font-bold hover:underline"
+                        >
+                          Futa
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
