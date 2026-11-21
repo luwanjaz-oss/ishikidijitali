@@ -31,6 +31,129 @@ function getProductCommissionRate(item) {
   return num > 1 ? num / 100 : num;
 }
 
+function getOriginalPrice(product, activePrice) {
+  const candidate =
+    product?.old_price ??
+    product?.original_price ??
+    product?.compare_at_price ??
+    product?.previous_price ??
+    null;
+  if (candidate !== null && candidate !== undefined && Number(candidate) > Number(activePrice || 0)) {
+    return Number(candidate);
+  }
+  if (product?.basePrice && Number(product.basePrice) > Number(activePrice || 0)) {
+    return Number(product.basePrice);
+  }
+  return null;
+}
+
+function parseJsonSafe(val) {
+  if (!val) return null;
+  if (typeof val === "object") return val;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return null;
+  }
+}
+
+function detectDistributorAccount() {
+  if (typeof window === "undefined") {
+    return { code: "", accountName: "", source: "" };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const urlRef = (
+    params.get("ref") ||
+    params.get("referral") ||
+    params.get("distributor") ||
+    params.get("affiliate") ||
+    ""
+  ).trim();
+
+  // 1. Angalia kama kuna msambazaji aliyejiunga au kuingia kwenye akaunti (localStorage)
+  const accountObjectKeys = [
+    "ishiki_active_distributor",
+    "ishiki_distributor_user",
+    "ishiki_distributor",
+    "distributor_account",
+    "distributor_session",
+    "current_distributor",
+    "msambazaji_account",
+  ];
+
+  for (const key of accountObjectKeys) {
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+    const obj = parseJsonSafe(raw);
+    if (obj && typeof obj === "object") {
+      const accCode = String(
+        obj.code || obj.ref_code || obj.referral_code || obj.distributor_code || obj.username || obj.id || ""
+      ).trim();
+      const accName = String(
+        obj.full_name || obj.name || obj.account_name || obj.username || obj.phone || accCode || ""
+      ).trim();
+      if (accCode || accName) {
+        const finalCode = accCode || accName;
+        localStorage.setItem("ishiki_ref_code", finalCode);
+        return {
+          code: finalCode,
+          accountName: accName || finalCode,
+          source: "account",
+        };
+      }
+    } else if (String(raw).trim()) {
+      const val = String(raw).trim();
+      return { code: val, accountName: val, source: "account" };
+    }
+  }
+
+  const directName = (
+    localStorage.getItem("ishiki_distributor_name") ||
+    localStorage.getItem("distributor_name") ||
+    localStorage.getItem("msambazaji_name") ||
+    ""
+  ).trim();
+
+  const directCodeKeys = [
+    "ishiki_distributor_code",
+    "distributor_code",
+    "referral_code",
+    "msambazaji_code",
+    "ishiki_ref_code",
+    "ref_code",
+  ];
+
+  let savedCode = "";
+  for (const k of directCodeKeys) {
+    const v = (localStorage.getItem(k) || "").trim();
+    if (v) {
+      savedCode = v;
+      break;
+    }
+  }
+
+  if (urlRef) {
+    localStorage.setItem("ishiki_ref_code", urlRef);
+    return {
+      code: urlRef,
+      accountName: directName && savedCode === urlRef ? directName : urlRef,
+      source: directName && savedCode === urlRef ? "account" : "referral_link",
+    };
+  }
+
+  if (savedCode || directName) {
+    const finalCode = savedCode || directName;
+    return {
+      code: finalCode,
+      accountName: directName || finalCode,
+      source: directName ? "account" : "referral_link",
+    };
+  }
+
+  return { code: "", accountName: "", source: "" };
+}
+
 function normalizeVariantList(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -219,6 +342,11 @@ function getProductImages(p) {
     .filter(Boolean);
 }
 
+function renderStars(count = 5) {
+  const safe = Math.min(5, Math.max(1, Number(count) || 5));
+  return "★".repeat(safe) + "☆".repeat(5 - safe);
+}
+
 const STATUS_PROGRESS = {
   pending: 5,
   inasindikwa: 15,
@@ -281,7 +409,7 @@ function getOrderJourney(order, products) {
   };
 }
 
-function ProductCard({ product, onShare, onOpenModal }) {
+function ProductCard({ product, reviews = [], onShare, onOpenModal }) {
   const images = getProductImages(product);
   const [imgIdx, setImgIdx] = useState(0);
   const touchStartX = useRef(null);
@@ -292,6 +420,13 @@ function ProductCard({ product, onShare, onOpenModal }) {
     variants.colors.length > 0 ||
     variants.types.length > 0 ||
     Object.keys(variants.options).length > 0;
+
+  const oldPrice = getOriginalPrice(product, product.price);
+  const reviewsCount = reviews.length;
+  const avgRating =
+    reviewsCount > 0
+      ? (reviews.reduce((sum, r) => sum + (Number(r.rating) || 5), 0) / reviewsCount).toFixed(1)
+      : null;
 
   function prevImg(e) {
     e.preventDefault();
@@ -400,6 +535,23 @@ function ProductCard({ product, onShare, onOpenModal }) {
         </button>
         <p className="text-[11px] sm:text-xs text-[#6B7280] line-clamp-2 leading-relaxed">{product.description}</p>
 
+        {/* HALISI: REVIEWS & COMMENTS ZILIZOTUMWA NA WATEJA */}
+        <button
+          type="button"
+          onClick={() => onOpenModal(product)}
+          className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-left hover:underline"
+        >
+          {reviewsCount > 0 ? (
+            <>
+              <span className="text-[#E8A93B]">{renderStars(Math.round(Number(avgRating)))}</span>
+              <span className="font-bold text-[#12182B]">{avgRating}</span>
+              <span className="text-gray-500">({reviewsCount} {reviewsCount === 1 ? "review" : "reviews"})</span>
+            </>
+          ) : (
+            <span className="text-gray-400">☆ Bado hakuna review • Andika maoni</span>
+          )}
+        </button>
+
         <div className="flex flex-wrap items-center gap-1.5">
           {Number(product.sold_count) > 0 && (
             <span className="text-[9px] sm:text-[10px] text-[#E8A93B] font-bold">
@@ -415,6 +567,11 @@ function ProductCard({ product, onShare, onOpenModal }) {
 
         <div className="mt-auto pt-2 border-t border-gray-100 flex items-center justify-between gap-2 flex-wrap">
           <div>
+            {oldPrice && (
+              <span className="block text-[10px] sm:text-[11px] text-gray-400 line-through font-medium">
+                {fmtTZS(oldPrice)}
+              </span>
+            )}
             <span className="block font-extrabold text-[#12182B] text-sm sm:text-base">{fmtTZS(product.price)}</span>
             <span className="text-[9px] sm:text-[10px] text-green-600 font-bold">✓ Pay on Delivery</span>
           </div>
@@ -452,6 +609,13 @@ export default function Home() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const [reviewsByProduct, setReviewsByProduct] = useState({});
+  const [reviewerName, setReviewerName] = useState("");
+  const [reviewerRating, setReviewerRating] = useState(5);
+  const [reviewerComment, setReviewerComment] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewFeedback, setReviewFeedback] = useState("");
+
   const [showCartDrawer, setShowCartDrawer] = useState(false);
   const [showTrackingModal, setShowTrackingModal] = useState(false);
   const [showCustomOrderModal, setShowCustomOrderModal] = useState(false);
@@ -459,7 +623,6 @@ export default function Home() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [copiedProductId, setCopiedProductId] = useState(null);
 
-  // Hali ya "Niagize" (taarifa za kuagiza na madaraja ya service fee)
   const [customItemTier, setCustomItemTier] = useState("vidogo");
   const [customItemName, setCustomItemName] = useState("");
   const [customItemDetails, setCustomItemDetails] = useState("");
@@ -522,7 +685,11 @@ export default function Home() {
   const [trackingError, setTrackingError] = useState("");
   const [trackingLoading, setTrackingLoading] = useState(false);
 
-  const [activeRefCode, setActiveRefCode] = useState("");
+  const [distributorInfo, setDistributorInfo] = useState({
+    code: "",
+    accountName: "",
+    source: "",
+  });
   const [includeRefOnShare, setIncludeRefOnShare] = useState(true);
 
   const [checkoutStatus, setCheckoutStatus] = useState("idle");
@@ -540,14 +707,103 @@ export default function Home() {
     return priced ? priced.price : product.price;
   }
 
+  function refreshDistributorInfo() {
+    const info = detectDistributorAccount();
+    setDistributorInfo(info);
+    return info;
+  }
+
+  async function loadReviews() {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from("product_reviews")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error || !Array.isArray(data)) return;
+      const grouped = {};
+      data.forEach((rev) => {
+        const key = String(rev.product_id);
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(rev);
+      });
+      setReviewsByProduct(grouped);
+    } catch {
+      // Jedwali linaweza kuwa halijaanzishwa bado
+    }
+  }
+
+  async function handleSubmitReview(e) {
+    e.preventDefault();
+    if (!selectedProduct || !reviewerComment.trim() || reviewSubmitting) return;
+
+    setReviewSubmitting(true);
+    setReviewFeedback("");
+
+    const cleanName = reviewerName.trim() || "Mteja";
+    const cleanComment = reviewerComment.trim();
+    const cleanRating = Math.min(5, Math.max(1, Number(reviewerRating) || 5));
+    const prodKey = String(selectedProduct.id);
+
+    const localEntry = {
+      id: `local-${Date.now()}`,
+      product_id: selectedProduct.id,
+      reviewer_name: cleanName,
+      rating: cleanRating,
+      comment: cleanComment,
+      created_at: new Date().toISOString(),
+    };
+
+    try {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from("product_reviews")
+          .insert([
+            {
+              product_id: String(selectedProduct.id),
+              reviewer_name: cleanName,
+              rating: cleanRating,
+              comment: cleanComment,
+            },
+          ])
+          .select()
+          .single();
+
+        if (error) throw error;
+        const saved = data || localEntry;
+        setReviewsByProduct((prev) => ({
+          ...prev,
+          [prodKey]: [saved, ...(prev[prodKey] || [])],
+        }));
+        setReviewerComment("");
+        setReviewFeedback("Asante! Review/comment yako imehifadhiwa.");
+      } else {
+        setReviewsByProduct((prev) => ({
+          ...prev,
+          [prodKey]: [localEntry, ...(prev[prodKey] || [])],
+        }));
+        setReviewerComment("");
+        setReviewFeedback("Asante! Review/comment yako imeongezwa.");
+      }
+    } catch {
+      setReviewsByProduct((prev) => ({
+        ...prev,
+        [prodKey]: [localEntry, ...(prev[prodKey] || [])],
+      }));
+      setReviewerComment("");
+      setReviewFeedback("Maoni yako yameongezwa (hakikisha table ya product_reviews ipo Supabase).");
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
+
   function buildProductShareData(product, withRef = includeRefOnShare) {
     const origin =
       typeof window !== "undefined" && window.location.origin.startsWith("http")
         ? window.location.origin
         : SITE_URL;
-    const refCode =
-      activeRefCode ||
-      (typeof window !== "undefined" ? localStorage.getItem("ishiki_ref_code") : "");
+    const info = refreshDistributorInfo();
+    const refCode = info.code;
 
     const url = new URL(`${origin}/product/${product.id}`);
     if (withRef && refCode) {
@@ -555,13 +811,18 @@ export default function Home() {
     }
 
     const displayPrice = getEffectiveDisplayPrice(product);
+    const oldPrice = getOriginalPrice(product, displayPrice);
     const productUrl = url.toString();
     const shareText =
       `🔥 *${product.name}*\n` +
+      (oldPrice ? `~Bei ya Awali: ${fmtTZS(oldPrice)}~\n` : "") +
       `💰 Bei: *${fmtTZS(displayPrice)}*\n` +
+      (withRef && refCode
+        ? `🤝 Msambazaji: *${info.accountName || refCode}* (${refCode})\n`
+        : "") +
       `✅ Agiza sasa kupitia Ishi Kidijitali:\n${productUrl}`;
 
-    return { productUrl, shareText, displayPrice };
+    return { productUrl, shareText, displayPrice, info };
   }
 
   function handleShareWhatsApp(product) {
@@ -600,9 +861,26 @@ export default function Home() {
   }
 
   function handleClearSavedRef() {
-    setActiveRefCode("");
+    setDistributorInfo({ code: "", accountName: "", source: "" });
     if (typeof window !== "undefined") {
-      localStorage.removeItem("ishiki_ref_code");
+      [
+        "ishiki_ref_code",
+        "ishiki_distributor_code",
+        "distributor_code",
+        "referral_code",
+        "ref_code",
+        "msambazaji_code",
+        "ishiki_distributor_name",
+        "distributor_name",
+        "msambazaji_name",
+        "ishiki_active_distributor",
+        "ishiki_distributor_user",
+        "ishiki_distributor",
+        "distributor_account",
+        "distributor_session",
+        "current_distributor",
+        "msambazaji_account",
+      ].forEach((k) => localStorage.removeItem(k));
     }
   }
 
@@ -610,6 +888,7 @@ export default function Home() {
     e.preventDefault();
     const qtyNum = Math.max(1, Number(customItemQty) || 1);
     const selectedTierObj = NIAGIZE_TIERS.find((t) => t.id === customItemTier) || NIAGIZE_TIERS[0];
+    const info = refreshDistributorInfo();
 
     let msg = "🛍️ *OMBI LA NIAGIZE KITU (ISHI KIDIJITALI)*\n\n";
     msg += `📂 *Aina ya Agizo:* ${selectedTierObj.label}\n`;
@@ -621,7 +900,9 @@ export default function Home() {
     msg += `🛠️ *Ada ya Huduma (Service Fee):* ${fmtTZS(selectedTierObj.fee)}\n`;
     msg += `📍 *Mkoa:* ${customItemMkoa}\n`;
     msg += `📞 *Simu ya Mteja:* ${customItemPhone}\n`;
-    if (activeRefCode && includeRefOnShare) msg += `🔗 *Msambazaji Ref:* ${activeRefCode}\n`;
+    if (info.code && includeRefOnShare) {
+      msg += `🔗 *Msambazaji:* ${info.accountName || info.code} (${info.code})\n`;
+    }
     msg += "\nTafadhali nithibitishie bei ya bidhaa, usafiri, na utaratibu wa kuanza kuagiza.";
 
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
@@ -634,16 +915,13 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      refreshDistributorInfo();
       const params = new URLSearchParams(window.location.search);
-      const ref = params.get("ref") || localStorage.getItem("ishiki_ref_code");
-      if (ref) {
-        setActiveRefCode(ref);
-        localStorage.setItem("ishiki_ref_code", ref);
-      }
       if (params.get("cart") === "1") {
         setShowCartDrawer(true);
       }
     }
+    loadReviews();
   }, []);
 
   useEffect(() => {
@@ -688,6 +966,7 @@ export default function Home() {
   }, [selectedProduct, modalImagesForEffect.length, modalAutoSlidePaused]);
 
   const handleOpenProductModal = (product) => {
+    refreshDistributorInfo();
     setSelectedProduct(product);
     const { sizes, colors, types, options } = getProductVariants(product);
     setSelectedSize(sizes[0]?.name || "");
@@ -702,6 +981,7 @@ export default function Home() {
     setModalGalleryIdx(0);
     setModalAutoSlidePaused(false);
     setJustAddedToCart(false);
+    setReviewFeedback("");
   };
 
   const buildModalCartItem = () => {
@@ -784,13 +1064,15 @@ export default function Home() {
     if (cart.length === 0 || checkoutStatus === "submitting") return;
 
     setCheckoutStatus("submitting");
+    const info = refreshDistributorInfo();
+    const refCode = info.code;
 
     let subtotal = 0;
     let totalCommission = 0;
     cart.forEach((item) => {
       const lineTotal = (item.price || 0) * (item.qty || 1);
       subtotal += lineTotal;
-      if (activeRefCode) {
+      if (refCode) {
         totalCommission += lineTotal * getProductCommissionRate(item);
       }
     });
@@ -831,8 +1113,8 @@ export default function Home() {
               subtotal: subtotal,
               shipping_fee: shippingFee,
               total: total,
-              ref_code: activeRefCode || null,
-              commission_total: activeRefCode ? Math.round(totalCommission) : 0,
+              ref_code: refCode || null,
+              commission_total: refCode ? Math.round(totalCommission) : 0,
               status: "pending",
             }
           ])
@@ -876,7 +1158,9 @@ export default function Home() {
     message += `📞 *Simu:* ${customerPhone || "Haijawekwa"}\n`;
     message += `📍 *Mkoa:* ${customerMkoa}\n`;
     message += `🏠 *Eneo/Mtaa:* ${customerAddress || "Haikutajwa"}\n`;
-    if (activeRefCode) message += `🔗 *Msambazaji Ref:* ${activeRefCode}\n`;
+    if (refCode) {
+      message += `🔗 *Msambazaji:* ${info.accountName || refCode} (${refCode})\n`;
+    }
     message += "\n📋 *ORODHA YA BIDHAA:*\n";
 
     cart.forEach((item, index) => {
@@ -985,6 +1269,7 @@ export default function Home() {
 
   const modalImages = selectedProduct ? getProductImages(selectedProduct) : [];
   const modalVariants = selectedProduct ? getProductVariants(selectedProduct) : { sizes: [], colors: [], types: [], options: {} };
+  const activeProductReviews = selectedProduct ? reviewsByProduct[String(selectedProduct.id)] || [] : [];
 
   return (
     <main className="bg-[#F7F3EA] min-h-screen relative text-[#12182B]">
@@ -1289,6 +1574,7 @@ export default function Home() {
               <ProductCard
                 key={p.id}
                 product={p}
+                reviews={reviewsByProduct[String(p.id)] || []}
                 onShare={handleShareDevice}
                 onOpenModal={handleOpenProductModal}
               />
@@ -1398,7 +1684,7 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* NIAGIZE KITU MODAL (TAARIFA ZA KUAGIZA & MADAJA YA SERVICE FEE) */}
+      {/* NIAGIZE KITU MODAL */}
       {showCustomOrderModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 pt-0 relative shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1546,7 +1832,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* PRODUCT DETAIL & VARIATION MODAL (STICKY X + AUTO-SLIDE + MANUAL SLIDE + WEKA KWENYE KIKAPU & NUNUA) */}
+      {/* PRODUCT DETAIL, REVIEWS/COMMENTS & SHARE MODAL */}
       {selectedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-white w-full max-w-md rounded-2xl p-5 sm:p-6 pt-0 relative shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1604,6 +1890,12 @@ export default function Home() {
                     selectedProduct.shipping_fee;
                   const displayImage = variantImage || modalImages[modalGalleryIdx];
                   const displayPrice = variantPrice !== null ? variantPrice : selectedProduct.price;
+                  const oldPrice = getOriginalPrice(selectedProduct, displayPrice);
+                  const revCount = activeProductReviews.length;
+                  const avgRev =
+                    revCount > 0
+                      ? (activeProductReviews.reduce((acc, item) => acc + (Number(item.rating) || 5), 0) / revCount).toFixed(1)
+                      : null;
 
                   return (
                     <>
@@ -1672,13 +1964,30 @@ export default function Home() {
                       )}
 
                       <h3 className="text-base font-bold text-[#12182B] mb-1">{selectedProduct.name}</h3>
+                      <div className="flex items-center gap-1.5 text-xs mb-2">
+                        {revCount > 0 ? (
+                          <>
+                            <span className="text-[#E8A93B]">{renderStars(Math.round(Number(avgRev)))}</span>
+                            <span className="font-bold text-[#12182B]">{avgRev}</span>
+                            <span className="text-gray-400">({revCount} {revCount === 1 ? "review" : "reviews"})</span>
+                          </>
+                        ) : (
+                          <span className="text-gray-400 text-[11px]">☆ Bado hakuna review ya mteja</span>
+                        )}
+                      </div>
+
                       <div className="flex flex-wrap items-center gap-2 mb-3">
-                        <p className="text-xs font-bold text-[#17A398]">
+                        <p className="text-sm font-extrabold text-[#17A398]">
                           {fmtTZS(displayPrice)}
-                          {variantPrice !== null && variantPrice !== selectedProduct.price && (
-                            <span className="text-gray-400 font-normal line-through ml-2">{fmtTZS(selectedProduct.price)}</span>
-                          )}
                         </p>
+                        {oldPrice && (
+                          <span className="text-xs text-gray-400 line-through">
+                            {fmtTZS(oldPrice)}
+                          </span>
+                        )}
+                        {variantPrice !== null && variantPrice !== selectedProduct.price && !oldPrice && (
+                          <span className="text-gray-400 font-normal line-through text-xs">{fmtTZS(selectedProduct.price)}</span>
+                        )}
                         {Number(effectiveShipping) > 0 && (
                           <span className="text-[10px] font-bold bg-[#E8A93B]/20 text-[#9A6B12] px-2 py-0.5 rounded-full">
                             🚚 Usafiri: {fmtTZS(Number(effectiveShipping))} / pc
@@ -1819,20 +2128,25 @@ export default function Home() {
                   </button>
                 </div>
 
+                {/* SEHEMU YA KUSHARE + MUONEKANO WA AKAUNTI YA MSAMBAZAJI */}
                 <div className="mt-4 pt-3 border-t border-gray-100 space-y-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
                       Sambaza Bidhaa Hii:
                     </p>
-                    {activeRefCode && (
+                    {distributorInfo.code ? (
                       <div className="flex items-center gap-2 text-[10px]">
-                        <label className="flex items-center gap-1 cursor-pointer font-semibold text-[#12182B]">
+                        <label className="flex items-center gap-1 cursor-pointer font-bold text-[#0B5852]">
                           <input
                             type="checkbox"
                             checked={includeRefOnShare}
                             onChange={(e) => setIncludeRefOnShare(e.target.checked)}
                           />
-                          <span>Ref: {activeRefCode}</span>
+                          <span>
+                            {distributorInfo.source === "account"
+                              ? `Akaunti ya Msambazaji: ${distributorInfo.accountName} (${distributorInfo.code})`
+                              : `Msambazaji: ${distributorInfo.code}`}
+                          </span>
                         </label>
                         <button
                           type="button"
@@ -1842,8 +2156,13 @@ export default function Home() {
                           Futa
                         </button>
                       </div>
+                    ) : (
+                      <Link href="/wasambazaji" className="text-[10px] font-bold text-[#17A398] hover:underline">
+                        Jiunge / Ingia Msambazaji →
+                      </Link>
                     )}
                   </div>
+
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
@@ -1866,6 +2185,72 @@ export default function Home() {
                     >
                       {copiedProductId === selectedProduct.id ? "✓ Imenakiliwa" : "🔗 Copy Link"}
                     </button>
+                  </div>
+                </div>
+
+                {/* SEHEMU YA REVIEWS & COMMENTS ZA WATEJA */}
+                <div className="mt-5 pt-4 border-t border-gray-100 space-y-3">
+                  <h4 className="text-xs font-extrabold text-[#12182B]">
+                    💬 Reviews & Maoni ya Wateja ({activeProductReviews.length})
+                  </h4>
+
+                  <form onSubmit={handleSubmitReview} className="bg-[#F7F3EA] p-3 rounded-xl space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Jina lako (mfano: Asha)"
+                        value={reviewerName}
+                        onChange={(e) => setReviewerName(e.target.value)}
+                        className="px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs"
+                      />
+                      <select
+                        value={reviewerRating}
+                        onChange={(e) => setReviewerRating(Number(e.target.value))}
+                        className="px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold"
+                      >
+                        <option value={5}>★★★★★ (5/5)</option>
+                        <option value={4}>★★★★☆ (4/5)</option>
+                        <option value={3}>★★★☆☆ (3/5)</option>
+                        <option value={2}>★★☆☆☆ (2/5)</option>
+                        <option value={1}>★☆☆☆☆ (1/5)</option>
+                      </select>
+                    </div>
+                    <textarea
+                      rows={2}
+                      required
+                      placeholder="Andika comment au maoni yako kuhusu bidhaa hii..."
+                      value={reviewerComment}
+                      onChange={(e) => setReviewerComment(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg text-xs"
+                    />
+                    <button
+                      type="submit"
+                      disabled={reviewSubmitting}
+                      className="w-full bg-[#12182B] hover:bg-[#17A398] text-white text-xs font-bold py-2 rounded-lg transition-colors"
+                    >
+                      {reviewSubmitting ? "Inatuma..." : "Tuma Review / Comment"}
+                    </button>
+                    {reviewFeedback && (
+                      <p className="text-[11px] font-bold text-[#0B5852]">{reviewFeedback}</p>
+                    )}
+                  </form>
+
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {activeProductReviews.length === 0 ? (
+                      <p className="text-[11px] text-gray-400 text-center py-2">
+                        Hakuna maoni bado. Kuwa wa kwanza kuandika review ya bidhaa hii.
+                      </p>
+                    ) : (
+                      activeProductReviews.map((rev) => (
+                        <div key={rev.id} className="bg-gray-50 border border-gray-100 rounded-xl p-2.5 text-xs space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-[#12182B]">{rev.reviewer_name || "Mteja"}</span>
+                            <span className="text-[#E8A93B] text-[11px]">{renderStars(rev.rating)}</span>
+                          </div>
+                          <p className="text-gray-600 text-[11px] leading-relaxed">{rev.comment}</p>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </>
