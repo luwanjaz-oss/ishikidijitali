@@ -453,7 +453,7 @@ export default function AdminPage() {
       Notification.requestPermission();
     }
 
-    const channel = supabase
+    const ordersChannel = supabase
       .channel("admin-new-orders")
       .on(
         "postgres_changes",
@@ -484,8 +484,22 @@ export default function AdminPage() {
       )
       .subscribe();
 
+    const customReqChannel = supabase
+      .channel("admin-custom-requests")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "custom_requests" },
+        (payload) => {
+          if (payload?.new) {
+            setCustomRequests((prev) => [payload.new, ...prev]);
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(ordersChannel);
+      supabase.removeChannel(customReqChannel);
     };
   }, [authenticated]);
 
@@ -695,6 +709,16 @@ export default function AdminPage() {
   const totalOrders = orders.length;
   const totalItemsSold = orders.reduce((sum, o) => sum + parseItems(o.items).reduce((s, it) => s + (it.qty || 1), 0), 0);
 
+  // TOTAL EARN ZA NIAGIZE (kutoka custom_requests)
+  const niagizeServiceFeeTotal = customRequests.reduce(
+    (sum, r) => sum + (Number(r.service_fee) || 0),
+    0
+  );
+  const niagizeEstimatedTotal = customRequests.reduce(
+    (sum, r) => sum + (Number(r.estimated_product_cost) || 0) + (Number(r.service_fee) || 0),
+    0
+  );
+
   const paidOrPromisedCount = orders.filter((o) =>
     ["amelipa_kamili", "amelipa_kidogo", "atalipa_mzigo_ukifika"].includes(o.payment_status)
   ).length;
@@ -766,41 +790,45 @@ export default function AdminPage() {
 
       <section className="max-w-4xl mx-auto px-4 py-5">
         {/* MUHTASARI WA JUMLA */}
-        {!loading && orders.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Jumla ya Oda</p>
-              <p className="text-lg font-extrabold text-[#12182B]">{totalOrders}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Vitu Vilivyoagizwa</p>
-              <p className="text-lg font-extrabold text-[#12182B]">{totalItemsSold}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Waliolipa / Walioahidi</p>
-              <p className="text-lg font-extrabold text-blue-700">{paidOrPromisedCount}</p>
-            </div>
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Fedha Zilizokusanywa</p>
-              <p className="text-xs sm:text-sm font-extrabold text-green-700 mt-1">{fmtTZS(collectedFunds)}</p>
-            </div>
-            <div className="col-span-2 sm:col-span-1 bg-white border border-gray-200 rounded-xl p-3 text-center">
-              <p className="text-[10px] text-gray-500 font-medium">Thamani ya Oda Zote</p>
-              <p className="text-xs sm:text-sm font-extrabold text-[#17A398] mt-1">{fmtTZS(totalRevenue)}</p>
-            </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-gray-500 font-medium">Jumla ya Oda</p>
+            <p className="text-lg font-extrabold text-[#12182B]">{totalOrders}</p>
           </div>
-        )}
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-gray-500 font-medium">Vitu Vilivyoagizwa</p>
+            <p className="text-lg font-extrabold text-[#12182B]">{totalItemsSold}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-gray-500 font-medium">Waliolipa / Walioahidi</p>
+            <p className="text-lg font-extrabold text-blue-700">{paidOrPromisedCount}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-gray-500 font-medium">Fedha Zilizokusanywa</p>
+            <p className="text-xs sm:text-sm font-extrabold text-green-700 mt-1">{fmtTZS(collectedFunds)}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-gray-500 font-medium">Total Earn Niagize</p>
+            <p className="text-xs sm:text-sm font-extrabold text-[#D97706] mt-1">{fmtTZS(niagizeServiceFeeTotal)}</p>
+            <p className="text-[9px] text-gray-400">Maombi {customRequests.length}</p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+            <p className="text-[10px] text-gray-500 font-medium">Thamani ya Oda Zote</p>
+            <p className="text-xs sm:text-sm font-extrabold text-[#17A398] mt-1">{fmtTZS(totalRevenue)}</p>
+          </div>
+        </div>
 
-        {/* MAOMBI MAALUM (AGIZA KITU WHATSAPP) */}
+        {/* MAOMBI MAALUM (AGIZA KITU / NIAGIZE KITU) */}
         <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-5 shadow-sm">
           <button
             onClick={() => setShowCustomRequestsPanel((v) => !v)}
-            className="w-full flex items-center justify-between"
+            className="w-full flex items-center justify-between gap-2"
           >
-            <p className="text-xs font-bold text-[#12182B]">
-              🛍️ Maombi ya "Agiza Kitu WhatsApp" ({customRequests.length})
+            <p className="text-xs font-bold text-[#12182B] text-left">
+              🛍️ Maombi ya "Niagize Kitu" ({customRequests.length}) • Total Earn:{" "}
+              <span className="text-[#D97706]">{fmtTZS(niagizeServiceFeeTotal)}</span>
             </p>
-            <span className="text-gray-400 text-xs">{showCustomRequestsPanel ? "▲" : "▼"}</span>
+            <span className="text-gray-400 text-xs shrink-0">{showCustomRequestsPanel ? "▲" : "▼"}</span>
           </button>
 
           {showCustomRequestsPanel && (
@@ -812,15 +840,29 @@ export default function AdminPage() {
                   const estCost = Number(req.estimated_product_cost) || 0;
                   const fee = Number(req.service_fee) || 0;
                   const phone = formatPhoneForWhatsApp(req.customer_phone);
+                  const displayTitle =
+                    req.item_name || req.customer_name || "Mteja";
+                  const displayMeta = [
+                    req.origin,
+                    req.shipping_mode,
+                    req.qty ? `Qty: ${req.qty}` : null,
+                    req.region ? `📍 ${req.region}` : null,
+                    req.tier_label || req.sourcing_type,
+                  ]
+                    .filter(Boolean)
+                    .join(" • ");
+                  const displayDesc =
+                    req.details || req.product_details || "Hakuna maelezo ya ziada.";
+
                   return (
                     <div key={req.id} className="border border-gray-100 bg-[#F7F9FC] rounded-xl p-3 text-xs space-y-1.5">
                       <div className="flex justify-between items-start gap-2">
                         <div>
                           <p className="font-bold text-[#12182B]">
-                            #{req.id} • {req.customer_name || "Mteja"} ({req.customer_phone || "—"})
+                            #{req.id} • {displayTitle} ({req.customer_phone || "—"})
                           </p>
                           <p className="text-[10px] text-gray-500">
-                            📍 {req.region || "—"} • {req.sourcing_type || "Agizo Maalum"}
+                            {displayMeta || "Agizo Maalum"}
                           </p>
                         </div>
                         <select
@@ -834,15 +876,23 @@ export default function AdminPage() {
                         </select>
                       </div>
 
-                      <p className="text-gray-700 bg-white p-2 rounded-lg border border-gray-100">
-                        {req.product_details}
+                      <p className="text-gray-700 bg-white p-2 rounded-lg border border-gray-100 whitespace-pre-line">
+                        {displayDesc}
                       </p>
 
                       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                         <span>
-                          Makadirio: <strong>{fmtTZS(estCost)}</strong> + Fee:{" "}
-                          <strong className="text-[#17A398]">{fmtTZS(fee)}</strong> ={" "}
-                          <strong>{fmtTZS(estCost + fee)}</strong>
+                          {estCost > 0 && (
+                            <>
+                              Makadirio: <strong>{fmtTZS(estCost)}</strong> +{" "}
+                            </>
+                          )}
+                          Service Fee: <strong className="text-[#17A398]">{fmtTZS(fee)}</strong>
+                          {estCost > 0 && (
+                            <>
+                              {" "}= <strong>{fmtTZS(estCost + fee)}</strong>
+                            </>
+                          )}
                         </span>
                         {phone && (
                           <a
@@ -858,6 +908,12 @@ export default function AdminPage() {
                     </div>
                   );
                 })
+              )}
+              {customRequests.length > 0 && (
+                <div className="pt-2 border-t border-gray-200 flex items-center justify-between text-xs font-extrabold">
+                  <span>Jumla ya Service Fee (Niagize):</span>
+                  <span className="text-[#D97706]">{fmtTZS(niagizeServiceFeeTotal)}</span>
+                </div>
               )}
             </div>
           )}
@@ -1217,7 +1273,10 @@ export default function AdminPage() {
             className="flex-1 px-3 py-2 border rounded-xl text-xs bg-white focus:outline-none focus:border-[#17A398]"
           />
           <button
-            onClick={loadOrders}
+            onClick={() => {
+              loadOrders();
+              loadCustomRequests();
+            }}
             className="bg-[#17A398] hover:bg-[#13847b] text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors whitespace-nowrap"
           >
             🔄 Sasisha
@@ -1310,7 +1369,7 @@ export default function AdminPage() {
                       <div className="space-y-0.5 text-gray-700">
                         {items.map((it, i) => (
                           <p key={i} className="text-[11px]">
-                            • {it.name}{" "}
+- {it.name}{" "}
                             {it.size ? `[Size: ${it.size}]` : ""}{" "}
                             {it.color ? `[Rangi: ${it.color}]` : ""}{" "}
                             {it.type ? `[${it.type}]` : ""} — <strong>{it.qty || 1}x</strong> ({fmtTZS(it.price)})
