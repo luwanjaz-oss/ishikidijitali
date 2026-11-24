@@ -71,7 +71,6 @@ function detectDistributorAccount() {
     ""
   ).trim();
 
-  // 1. Angalia kama kuna msambazaji aliyejiunga au kuingia kwenye akaunti (localStorage)
   const accountObjectKeys = [
     "ishiki_active_distributor",
     "ishiki_distributor_user",
@@ -252,7 +251,7 @@ const TRANSPORT_ROUTES = [
 const FURSA_ZA_ISHIKI = [
   { icon: "💰", title: "Kuwa Msambazaji", desc: "Sambaza link yako, pata commission kwa kila mauzo" },
   { icon: "🏪", title: "Anzisha Biashara", desc: "Anza biashara yako bila mtaji mkubwa" },
-  { icon: "🏠", title: "badili muonekano wa Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
+  { icon: "🏠", title: "Pambeza Nyumba", desc: "Bidhaa za kipekee za kuipendezesha nyumba yako" },
   { icon: "📈", title: "Kuza Biashara", desc: "Ongeza bidhaa mpya, kuza biashara uliyonayo" },
   { icon: "💡", title: "Ubunifu Mpya", desc: "Vifaa na mashine za kisasa kwa miradi yako" },
 ];
@@ -535,7 +534,6 @@ function ProductCard({ product, reviews = [], onShare, onOpenModal }) {
         </button>
         <p className="text-[11px] sm:text-xs text-[#6B7280] line-clamp-2 leading-relaxed">{product.description}</p>
 
-        {/* HALISI: REVIEWS & COMMENTS ZILIZOTUMWA NA WATEJA */}
         <button
           type="button"
           onClick={() => onOpenModal(product)}
@@ -715,22 +713,35 @@ export default function Home() {
 
   async function loadReviews() {
     if (!supabase) return;
+    const grouped = {};
+
     try {
-      const { data, error } = await supabase
-        .from("product_reviews")
+      const { data: revData, error: revErr } = await supabase
+        .from("reviews")
         .select("*")
         .order("created_at", { ascending: false });
-      if (error || !Array.isArray(data)) return;
-      const grouped = {};
-      data.forEach((rev) => {
-        const key = String(rev.product_id);
-        if (!grouped[key]) grouped[key] = [];
-        grouped[key].push(rev);
-      });
-      setReviewsByProduct(grouped);
+
+      if (!revErr && Array.isArray(revData)) {
+        revData.forEach((rev) => {
+          const pid = rev.product_id ?? rev.productId ?? rev.item_id;
+          if (pid === null || pid === undefined) return;
+          const key = String(pid);
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push({
+            id: rev.id,
+            product_id: pid,
+            reviewer_name: rev.customer_name || rev.reviewer_name || rev.name || "Mteja",
+            rating: Number(rev.rating || 5),
+            comment: rev.comment || rev.review || rev.message || "",
+            created_at: rev.created_at,
+          });
+        });
+      }
     } catch {
-      // Jedwali linaweza kuwa halijaanzishwa bado
+      // ignore
     }
+
+    setReviewsByProduct(grouped);
   }
 
   async function handleSubmitReview(e) {
@@ -744,6 +755,9 @@ export default function Home() {
     const cleanComment = reviewerComment.trim();
     const cleanRating = Math.min(5, Math.max(1, Number(reviewerRating) || 5));
     const prodKey = String(selectedProduct.id);
+    const numericProductId = /^\d+$/.test(String(selectedProduct.id))
+      ? Number(selectedProduct.id)
+      : String(selectedProduct.id);
 
     const localEntry = {
       id: `local-${Date.now()}`,
@@ -757,11 +771,11 @@ export default function Home() {
     try {
       if (supabase) {
         const { data, error } = await supabase
-          .from("product_reviews")
+          .from("reviews")
           .insert([
             {
-              product_id: String(selectedProduct.id),
-              reviewer_name: cleanName,
+              product_id: numericProductId,
+              customer_name: cleanName,
               rating: cleanRating,
               comment: cleanComment,
             },
@@ -770,7 +784,16 @@ export default function Home() {
           .single();
 
         if (error) throw error;
-        const saved = data || localEntry;
+
+        const saved = {
+          id: data?.id || localEntry.id,
+          product_id: data?.product_id ?? selectedProduct.id,
+          reviewer_name: data?.customer_name || cleanName,
+          rating: Number(data?.rating || cleanRating),
+          comment: data?.comment || cleanComment,
+          created_at: data?.created_at || localEntry.created_at,
+        };
+
         setReviewsByProduct((prev) => ({
           ...prev,
           [prodKey]: [saved, ...(prev[prodKey] || [])],
@@ -785,13 +808,14 @@ export default function Home() {
         setReviewerComment("");
         setReviewFeedback("Asante! Review/comment yako imeongezwa.");
       }
-    } catch {
+    } catch (err) {
+      console.error("Review insert error:", err);
       setReviewsByProduct((prev) => ({
         ...prev,
         [prodKey]: [localEntry, ...(prev[prodKey] || [])],
       }));
       setReviewerComment("");
-      setReviewFeedback("Maoni yako yameongezwa (hakikisha table ya product_reviews ipo Supabase).");
+      setReviewFeedback("Imeshindwa kuhifadhi Supabase; angalia RLS/permissions za table reviews.");
     } finally {
       setReviewSubmitting(false);
     }
@@ -884,11 +908,33 @@ export default function Home() {
     }
   }
 
-  function handleCustomOrderSubmit(e) {
+  async function handleCustomOrderSubmit(e) {
     e.preventDefault();
     const qtyNum = Math.max(1, Number(customItemQty) || 1);
     const selectedTierObj = NIAGIZE_TIERS.find((t) => t.id === customItemTier) || NIAGIZE_TIERS[0];
     const info = refreshDistributorInfo();
+
+    if (supabase) {
+      try {
+        await supabase.from("custom_requests").insert([
+          {
+            customer_phone: customItemPhone,
+            region: customItemMkoa,
+            tier_id: selectedTierObj.id,
+            tier_label: selectedTierObj.label,
+            item_name: customItemName,
+            origin: customItemOrigin,
+            shipping_mode: customItemShippingMode,
+            qty: qtyNum,
+            details: customItemDetails || null,
+            service_fee: Number(selectedTierObj.fee) || 0,
+            status: "pending",
+          },
+        ]);
+      } catch (err) {
+        console.error("Custom request save error:", err);
+      }
+    }
 
     let msg = "🛍️ *OMBI LA NIAGIZE KITU (ISHI KIDIJITALI)*\n\n";
     msg += `📂 *Aina ya Agizo:* ${selectedTierObj.label}\n`;
@@ -1255,7 +1301,7 @@ export default function Home() {
   const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
   const cartSubtotal = cart ? cart.reduce((s, i) => s + (i.price || 0) * (i.qty || 1), 0) : 0;
   const cartShippingTotal = cart
-    ? cart.reduce((s, i) => s + (Number(i.shipping_fee) || 0) * (i.qty || 1), 0)
+    ? cart.reduce((s, i) => s + (Number(i.shipping_fee) || 0) * (item.qty || 1), 0)
     : 0;
   const cartGrandTotal = cartSubtotal + cartShippingTotal;
 
@@ -2128,7 +2174,6 @@ export default function Home() {
                   </button>
                 </div>
 
-                {/* SEHEMU YA KUSHARE + MUONEKANO WA AKAUNTI YA MSAMBAZAJI */}
                 <div className="mt-4 pt-3 border-t border-gray-100 space-y-2">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
@@ -2188,7 +2233,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* SEHEMU YA REVIEWS & COMMENTS ZA WATEJA */}
                 <div className="mt-5 pt-4 border-t border-gray-100 space-y-3">
                   <h4 className="text-xs font-extrabold text-[#12182B]">
                     💬 Reviews & Maoni ya Wateja ({activeProductReviews.length})
