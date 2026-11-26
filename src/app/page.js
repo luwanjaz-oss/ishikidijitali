@@ -598,11 +598,11 @@ function ProductCard({ product, reviews = [], onShare, onOpenModal }) {
 
 export default function Home() {
   const cartContext = useCart();
-  const cart = cartContext.cart || [];
-  const addToCart = cartContext.addToCart;
-  const removeFromCart = cartContext.removeFromCart;
-  const updateQty = cartContext.updateQty;
-  const clearCart = cartContext.clearCart;
+  const cart = cartContext?.cart || [];
+  const addToCart = cartContext?.addToCart;
+  const removeFromCart = cartContext?.removeFromCart;
+  const updateQty = cartContext?.updateQty;
+  const clearCart = cartContext?.clearCart;
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -918,8 +918,10 @@ export default function Home() {
       try {
         await supabase.from("custom_requests").insert([
           {
+            customer_name: customItemName || "Mteja Niagize",
             customer_phone: customItemPhone,
             region: customItemMkoa,
+            sourcing_type: customItemOrigin || "Agizo Maalum",
             tier_id: selectedTierObj.id,
             tier_label: selectedTierObj.label,
             item_name: customItemName,
@@ -927,6 +929,7 @@ export default function Home() {
             shipping_mode: customItemShippingMode,
             qty: qtyNum,
             details: customItemDetails || null,
+            product_details: customItemDetails || customItemName || "Agizo maalum la Niagize",
             service_fee: Number(selectedTierObj.fee) || 0,
             status: "pending",
           },
@@ -1301,7 +1304,7 @@ export default function Home() {
   const cartCount = cart ? cart.reduce((s, i) => s + (i.qty || 1), 0) : 0;
   const cartSubtotal = cart ? cart.reduce((s, i) => s + (i.price || 0) * (i.qty || 1), 0) : 0;
   const cartShippingTotal = cart
-    ? cart.reduce((s, i) => s + (Number(i.shipping_fee) || 0) * (item.qty || 1), 0)
+    ? cart.reduce((s, i) => s + (Number(i.shipping_fee) || 0) * (i.qty || 1), 0)
     : 0;
   const cartGrandTotal = cartSubtotal + cartShippingTotal;
 
@@ -1861,7 +1864,7 @@ export default function Home() {
                       <span className="font-extrabold text-[#17A398] text-sm">{fmtTZS(activeTier.fee)}</span>
                     </div>
                     <p className="text-[10px] text-gray-500">
-                      * Gharama ya bidhaa yenyewe na nauli ya usafiri (uzito/ujazo) itathibitishwa WhatsApp kabla ya malipo.
+                      Gharama ya bidhaa yenyewe na nauli ya usafiri (uzito/ujazo) itathibitishwa WhatsApp kabla ya malipo.
                     </p>
                   </div>
                 );
